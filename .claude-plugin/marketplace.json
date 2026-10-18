@@ -1,0 +1,17 @@
+{
+  "name": "fofuxo-context-prune",
+  "owner": {
+    "name": "Antônio Froz",
+    "url": "https://github.com/uayten"
+  },
+  "metadata": {
+    "description": "Context Prune, a Claude Code plugin by Fofuxo: remove chosen turns from the context without a summary"
+  },
+  "plugins": [
+    {
+      "name": "context-prune",
+      "source": "./",
+      "description": "Removes chosen turns from the context, with no summary and no model call"
+    }
+  ]
+}

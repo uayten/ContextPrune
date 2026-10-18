@@ -1,0 +1,24 @@
+{
+  "name": "context-prune",
+  "displayName": "Context Prune",
+  "version": "1.0.0",
+  "description": "Removes chosen turns and old screenshots from the conversation's context, with no summary and no model call, and shows beside the model picker whether the prompt cache is warm or cold",
+  "author": {
+    "name": "Antônio Froz",
+    "url": "https://github.com/uayten"
+  },
+  "homepage": "https://github.com/uayten/ContextPrune",
+  "repository": "https://github.com/uayten/ContextPrune",
+  "documentationUrl": "https://github.com/uayten/ContextPrune#readme",
+  "supportUrl": "https://github.com/uayten/ContextPrune/issues",
+  "license": "MIT",
+  "keywords": [
+    "tokens",
+    "context",
+    "prune",
+    "prompt-cache",
+    "compact",
+    "mod"
+  ],
+  "types": "./types/index.d.ts"
+}
