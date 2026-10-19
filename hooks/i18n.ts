@@ -1,4 +1,4 @@
-import type { Lang } from '../types'
+import type { Lang, PruneNote } from '../types'
 
 export type { Lang }
 
@@ -70,10 +70,14 @@ const en = {
   turnsTokens: (turns: string, tokens: string) => `${turns} (~${tokens} tokens)`,
 
   // What the model reads in place of what went.
+  // Who the removed turns were from, as lines written before the count alone.
   removedWho: "user prompts and Claude's replies",
-  removedLine: (count: number, who: string, parts: string) =>
-    `[removed: ${count} ${count === 1 ? 'turn' : 'turns'} (${who}): ${parts}]`,
-  removedCommands: '[removed: commands]',
+  removedLine: (count: number, note?: PruneNote) =>
+    `[${count} ${count === 1 ? 'turn' : 'turns'} removed with /prune${note ? `. ${note.by === 'claude' ? "Claude's note" : 'Note'}: ${note.text}` : ''}]`,
+  removedCommands: '[commands removed with /prune]',
+  noteLabel: (note: PruneNote) =>
+    note.by === 'claude' ? "Claude's note, left in place of the turns:" : 'Note, left in place of the turns:',
+  deleteNote: 'Delete note',
   mediaRemoved: '[screenshot removed]',
 }
 
@@ -130,8 +134,11 @@ const pt: Texts = {
   turnsTokens: (turns, tokens) => `${turns} (~${tokens} tokens)`,
 
   removedWho: 'pedidos do usuário e respostas do Claude',
-  removedLine: (count, who, parts) => `[removido: ${count} ${count === 1 ? 'turno' : 'turnos'} (${who}): ${parts}]`,
-  removedCommands: '[removido: comandos]',
+  removedLine: (count, note) =>
+    `[${count} ${count === 1 ? 'turno removido' : 'turnos removidos'} com /prune${note ? `. ${note.by === 'claude' ? 'Nota do Claude' : 'Nota'}: ${note.text}` : ''}]`,
+  removedCommands: '[comandos removidos com /prune]',
+  noteLabel: note => (note.by === 'claude' ? 'Nota do Claude, que fica no lugar dos turnos:' : 'Nota, que fica no lugar dos turnos:'),
+  deleteNote: 'Apagar nota',
   mediaRemoved: '[print removido]',
 }
 

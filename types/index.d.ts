@@ -29,6 +29,16 @@ export type Mark = {
   by?: 'claude'
 }
 
+/**
+ * A short line a prune leaves with the count of removed turns: where the work
+ * stands, so the turns it replaces can go. Shown to the person in the pane.
+ */
+export type PruneNote = {
+  text: string
+  /** Who wrote it: `claude` through its tool; absent, the person. */
+  by?: 'claude'
+}
+
 export type LiveAnchor = {
   /** The first message's text after the compaction (the opening prompt). */
   head: string
@@ -79,6 +89,8 @@ declare module 'claude-code' {
        * process restarts). Null before any.
        */
       liveAnchor: LiveAnchor | null
+      /** The note the next prune leaves; null when there is none. */
+      note: PruneNote | null
     }
   }
 }

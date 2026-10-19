@@ -23,6 +23,7 @@ próxima mensagem gravaria a conversa inteira de novo de qualquer jeito.
   - [O painel /prune](#o-painel-prune)
   - [Prints](#prints)
   - [Marcas do Claude](#marcas-do-claude)
+  - [Nota](#nota)
   - [Poda automática](#poda-automática)
   - [Quanto custa podar](#quanto-custa-podar)
   - [Idioma](#idioma)
@@ -57,10 +58,9 @@ do prompt.
 - Clicar num item marca ou desmarca. `[x]` é marca sua; `[C]`, do Claude.
 - **Podar Agora** aplica as marcas na hora. **Desmarcar Todos** limpa tudo.
 - Os turnos marcados viram uma linha só, e é ela que o modelo lê:
-  `[removido: 5 turnos (pedidos do usuário e respostas do Claude): ok, roda um comando… | como eu escolho… | …]`.
-  Turnos marcados que parecem vizinhos no painel viram uma linha só. Os
-  comandos escondidos entre eles, como `/prune` e a resposta dele, saem junto.
-  Podar de novo uma linha `[removido: …]` soma a contagem.
+  `[5 turnos removidos com /prune]`. Turnos marcados que parecem vizinhos no
+  painel viram uma linha só. Os comandos escondidos entre eles, como `/prune`
+  e a resposta dele, saem junto. Podar de novo essa linha soma a contagem.
 - Peso sem `~`: medido quando o turno terminou. Com `~`: estimado (texto e
   raciocínio pelo tamanho, imagens pela resolução).
 - As marcas ficam guardadas e sobrevivem ao reinício do Claude.
@@ -87,6 +87,25 @@ A lista de turnos e marcas chega a ele só quando ele usa a ferramenta, não em
 toda mensagem. Ele só desmarca as próprias marcas; as suas ficam como você
 deixou. As marcas dele aparecem como `[C]` no painel, e você desmarca o que
 quiser manter.
+
+### Nota
+
+Às vezes um prompt que fica, ou que sai, já não diz onde o trabalho está:
+"vamos fazer X e Y" depois que X e Y ficaram prontos, ou um plano que mudou no
+meio da conversa. Para isso a poda pode deixar uma nota curta junto da
+contagem:
+
+```text
+[12 turnos removidos com /prune. Nota do Claude: X e Y prontos; faltam Z e A, que surgiram nos testes]
+```
+
+- O Claude escreve a nota com a mesma ferramenta das marcas, quando você
+  pede ou quando um prompt que fica passaria a enganar. Ela tem no máximo 300
+  caracteres e diz onde o trabalho está, não resume o que saiu.
+- A nota aparece no painel, acima das marcas, com o botão **Apagar nota**.
+- Ela entra na linha da poda mais recente; as linhas de podas anteriores
+  mantêm as delas. Uma nota nova substitui a da linha que ela absorve.
+- Seu prompt nunca é reescrito: a nota fica à parte, com o autor no nome.
 
 ### Poda automática
 
@@ -119,7 +138,7 @@ O plugin fala inglês ou português; o padrão é inglês. Para trocar, mande
 para todas as conversas.
 
 Muda o que você lê: o status, o painel, os avisos e as linhas que a poda deixa
-(`[removido: …]` ou `[removed: …]`, `[print removido]` ou
+(`[5 turnos removidos com /prune]` ou `[5 turns removed with /prune]`, `[print removido]` ou
 `[screenshot removed]`). As linhas que já estão na conversa ficam como foram
 escritas, e uma poda seguinte soma a contagem delas em qualquer idioma. O que
 só o Claude lê (a ferramenta de marcas) fica em inglês.
@@ -144,7 +163,7 @@ Testado no app desktop, versão 2.1.299.
 ## Como funciona por dentro
 
 A poda é um `/compact` que o próprio plugin responde (`session.compact`): ele
-devolve a conversa com os turnos marcados trocados pela linha `[removido: …]`,
+devolve a conversa com os turnos marcados trocados pela linha da contagem,
 sem chamar o modelo. As mensagens que ficam inteiras continuam no cache.
 
 | Parte | Hook |

@@ -1,7 +1,7 @@
 import type { ApiContentBlock, ApiMessage, SessionMessage } from 'claude-code'
 
-import type { ImageRow, Mark, Meter, LiveAnchor } from '../types'
-import type { Lang, Texts } from './i18n'
+import type { ImageRow, Mark, Meter, LiveAnchor, PruneNote } from '../types'
+import type { Lang } from './i18n'
 import { isLang, TEXTS, textsFor } from './i18n'
 
 // Prompt-cache lifetime of this account's requests. Each request renews the
@@ -20,6 +20,7 @@ export type SessionRecord = {
   images?: (ImageRow | string)[]
   turnTokens?: Record<string, number>
   boundary?: number | null
+  note?: PruneNote | null
 }
 export type Records = Record<string, SessionRecord>
 
@@ -274,17 +275,23 @@ export function markedTurns(messages: readonly SessionMessage[], marks: readonly
   return matchMarks(messages, marks).cut
 }
 
+// A note's length cap: a line on where the work stands, not a summary.
+export const NOTE_MAX_CHARS = 300
+
 // The conversation with the marked turns taken out whole, each run of
-// neighbouring cuts replaced by one line. The first message's reminders (the
+// neighbouring cuts replaced by one line saying how many turns went. The
+// note goes on the newest run's line, in place of any an earlier prune left
+// there; the other lines keep theirs. The first message's reminders (the
 // session's instructions) are kept on that line when it is cut.
 export function pruneMessages(
   messages: readonly SessionMessage[],
   cut: readonly Turn[],
-  description: string,
+  note: PruneNote | undefined,
   lang: Lang,
 ): SessionMessage[] {
   const t = textsFor(lang)
   const out: SessionMessage[] = []
+  const lines: { at: number; count: number; note?: PruneNote; reminders: string[] }[] = []
   const starts = new Map(cut.map(turn => [turn.index, turn]))
   let i = 0
   while (i < messages.length) {
@@ -298,26 +305,38 @@ export function pruneMessages(
       run.push(turn)
       i = turn.end
     }
-    const pieces = run.filter(turn => !turn.isCommand).map(turn => removedParts(messages[turn.index], turn, t))
-    const count = pieces.reduce((sum, piece) => sum + piece.count, 0)
-    const label = pieces.length
-      ? removedLabel(count, description ? [description] : pieces.flatMap(piece => piece.parts), lang)
-      : t.removedCommands
+    const pieces = run.filter(turn => !turn.isCommand).map(turn => removedPart(messages[turn.index]))
     const reminders = run[0].index === 0 ? (messages[0].text.match(REMINDER) ?? []) : []
-    out.push({ role: 'user', text: [...reminders, label].join('\n'), toolUses: [] })
+    if (pieces.length > 0) {
+      const count = pieces.reduce((sum, piece) => sum + piece.count, 0)
+      lines.push({ at: out.length, count, note: lastNote(pieces), reminders })
+    }
+    out.push({ role: 'user', text: [...reminders, t.removedCommands].join('\n'), toolUses: [] })
   }
+  lines.forEach((line, n) => {
+    const label = removedLabel(line.count, n === lines.length - 1 && note ? note : line.note, lang)
+    out[line.at] = { ...out[line.at], text: [...line.reminders, label].join('\n') }
+  })
   return out
 }
 
-// The line a prune leaves, as the model reads it: how many turns went and the
-// head of each prompt, so it knows what it no longer has. A line in either
-// language is read back, so a later prune merges it whatever the language.
+// A loop, not findLast: the hooks' runtime may predate it.
+function lastNote(pieces: readonly { note?: PruneNote }[]): PruneNote | undefined {
+  for (let i = pieces.length - 1; i >= 0; i--) if (pieces[i].note) return pieces[i].note
+  return undefined
+}
+
+// The line a prune leaves, as the model reads it: how many turns went, and
+// the note when there is one. A line in either language is read back, so a
+// later prune adds up its count and keeps its note.
+const PRUNED_LINE =
+  /^\[(\d+) (?:turnos? removidos?|turns? removed) (?:com|with) \/prune(?:\. (Nota do Claude|Claude's note|Nota|Note): ([\s\S]*))?\]$/
+// Lines from earlier versions: the count and each prompt's head, or the heads alone.
 const REMOVED_LINE = /^\[(?:removido|removed): (\d+) (?:turnos?|turns?) \([^)]*\): ([\s\S]*)\]$/
 const LEGACY_LINE = /^\[(?:removido|removed): ([\s\S]*)\]$/
 
-export function removedLabel(count: number, parts: readonly string[], lang: Lang): string {
-  const t = textsFor(lang)
-  return t.removedLine(count, t.removedWho, parts.join(' | '))
+export function removedLabel(count: number, note: PruneNote | undefined, lang: Lang): string {
+  return textsFor(lang).removedLine(count, note)
 }
 
 // Parts joined by ' | ' outside brackets.
@@ -334,14 +353,20 @@ function countParts(text: string): number {
 
 // What one cut turn adds to the line: a line an earlier prune left counts as
 // the turns it names, so pruning it again does not nest the count.
-function removedParts(m: SessionMessage, turn: Turn, t: Texts): { count: number; parts: string[] } {
+function removedPart(m: SessionMessage): { count: number; note?: PruneNote } {
   const text = m.text.replace(REMINDER, ' ').trim()
+  const pruned = text.match(PRUNED_LINE)
+  if (pruned) {
+    if (pruned[3] === undefined) return { count: Number(pruned[1]) }
+    const by = pruned[2] === 'Nota do Claude' || pruned[2] === "Claude's note" ? { by: 'claude' as const } : {}
+    return { count: Number(pruned[1]), note: { text: pruned[3], ...by } }
+  }
   const line = text.match(REMOVED_LINE)
-  if (line) return { count: Number(line[1]), parts: [line[2]] }
+  if (line) return { count: Number(line[1]) }
   // A line from before the count was written: one turn per part.
   const legacy = text.match(LEGACY_LINE)
-  if (legacy) return { count: countParts(legacy[1]), parts: [legacy[1]] }
-  return { count: 1, parts: [turn.preview || t.imagesAttached(1)] }
+  if (legacy) return { count: countParts(legacy[1]) }
+  return { count: 1 }
 }
 
 // Tokens the marked turns hold, as estimated.

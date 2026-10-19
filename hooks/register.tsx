@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PromptOrigin, Register, ResolveInput, SessionMessage } from 'claude-code'
 
-import type { ImageRow, Lang, Mark, Meter } from '../types'
+import type { ImageRow, Lang, Mark, Meter, PruneNote } from '../types'
 import { DEFAULT_LANG, LANGS, langArg, textsFor } from './i18n'
 import type { SessionRecord, Turn } from './lib'
 import {
@@ -29,6 +29,7 @@ import {
   parseRecords,
   preferencesPathFor,
   PRUNE_TAG,
+  NOTE_MAX_CHARS,
   isPruneAllowed,
   pruneDescription,
   pruneMessages,
@@ -63,6 +64,7 @@ const promptKeyAtom = atom({ plugin: 'context-prune', key: 'promptKey' } as cons
 const turnTokensAtom = atom({ plugin: 'context-prune', key: 'turnTokens' } as const, {})
 const boundaryAtom = atom({ plugin: 'context-prune', key: 'boundary' } as const, null)
 const liveAnchorAtom = atom({ plugin: 'context-prune', key: 'liveAnchor' } as const, null)
+const noteAtom = atom({ plugin: 'context-prune', key: 'note' } as const, null)
 // The language holds across conversations: kept in preferences.json and read
 // from there on the first ask of each load, not from $.state (which reads back
 // nothing written before a restart).
@@ -104,11 +106,13 @@ const MARK_TOOL_ID = 'mcp__context-prune__prune_marks'
 const MARK_TOOL_DESCRIPTION = [
   "Marks finished turns of this conversation for removal from the context (the Context Prune plugin's /prune).",
   'A turn is one user prompt and everything that answered it, tool calls included.',
-  'Marked turns are replaced by one line saying how many turns went and the head of each prompt, once the prompt cache is cold (an hour idle): the plugin prunes while the conversation sits idle, or the user prunes from the pane.',
+  'Marked turns are replaced by one line saying how many turns went, once the prompt cache is cold (an hour idle): the plugin prunes while the conversation sits idle, or the user prunes from the pane.',
   'The user sees your marks as [C] in the /prune pane and can unmark them.',
   'Mark what the rest of the work no longer needs: setup or debugging that ended in a fix, probes, superseded attempts, test confirmations.',
   'Keep turns that carry the goal, decisions, constraints or facts still relied on (a later turn may say "what I asked in the first message").',
   "Call `list` first: it numbers the turns and shows the marks ([C] yours, [U] the user's). Then `mark` or `unmark` with those numbers; you unmark only your own marks.",
+  `\`note\` sets the one line (at most ${NOTE_MAX_CHARS} characters) the prune leaves beside the count, as "Claude's note": where the work stands once the marked turns are gone, such as what was done and what is left, when a prompt that stays or goes no longer says it (goals reached, plans changed).`,
+  'Write it only when the user asks or a kept prompt now misleads; never a summary of the removed turns. An empty `note` deletes it. The user sees it in the pane and can delete it.',
 ].join(' ')
 
 // How long after the session starts a cold conversation is pruned.
@@ -172,6 +176,11 @@ async function patchMeter($: EngineInterface, patch: Partial<Meter> & { window: 
 async function setMarks($: EngineInterface, change: (marks: Mark[]) => Mark[]) {
   const marks = await update($, marksAtom, current => change(current ?? []))
   await saveRecord($, { marks })
+}
+
+async function setNote($: EngineInterface, note: PruneNote | null) {
+  await update($, noteAtom, () => note)
+  await saveRecord($, { note })
 }
 
 async function setBoundary($: EngineInterface, boundary: number | null) {
@@ -305,6 +314,7 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
   const t = textsFor(lang)
   const messages = await liveMessages($)
   const marks = (await read($, marksAtom)) ?? []
+  const note = await read($, noteAtom)
   const { cut: markedCut, found } = matchMarks(messages, marks)
   const markBy = new Map([...found].map(([mark, turn]) => [turn.index, mark.by === 'claude' ? '[C]' : '[x]']))
   const allImages = await readImages($)
@@ -461,6 +471,20 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
         </Box>
       )}
 
+      {note && (
+        <Box flexDirection="column" gap={1}>
+          <Text size="footnote" weight="medium" dimColor>
+            {t.noteLabel(note)}
+          </Text>
+          <Text>{note.text}</Text>
+          <Box flexDirection="row">
+            <Button key="delete-note" variant="secondary" onPress={() => setNote($, null)}>
+              {t.deleteNote}
+            </Button>
+          </Box>
+        </Box>
+      )}
+
       {hasMarks ? (
         <Box flexDirection="column" gap={1} borderStyle="round" borderColor={cache?.isWarm ? 'warning' : 'success'} paddingX={1}>
           {cut.length + markedImages.length > 0 && (
@@ -527,6 +551,7 @@ export const register: Register = on => {
     if (stored?.images?.length) await update($, imagesAtom, current => (current?.length ? current : stored.images!))
     if (stored?.turnTokens) await update($, turnTokensAtom, current => ({ ...stored.turnTokens, ...current }))
     if (stored?.boundary !== undefined) await update($, boundaryAtom, current => current ?? stored.boundary!)
+    if (stored?.note) await update($, noteAtom, current => current ?? stored.note!)
     await showStatus($)
     $.clock.every(REDRAW_MS, async () => {
       await showStatus($)
@@ -545,8 +570,9 @@ export const register: Register = on => {
       inputSchema: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['list', 'mark', 'unmark'] },
+          action: { type: 'string', enum: ['list', 'mark', 'unmark', 'note'] },
           turns: { type: 'array', items: { type: 'integer' }, description: 'Turn numbers (#n) from the latest list' },
+          note: { type: 'string', description: `For action note: the line the prune leaves, at most ${NOTE_MAX_CHARS} characters; empty deletes it` },
         },
         required: ['action'],
       },
@@ -641,23 +667,30 @@ export const register: Register = on => {
   })
 
   on('tool.call', { tool: MARK_TOOL_ID }, async ($, e) => {
-    const { action, turns = [] } = e as unknown as { action?: string; turns?: number[] }
+    const { action, turns = [], note } = e as unknown as { action?: string; turns?: number[]; note?: string }
     const messages = await liveMessages($)
     let refused: string[] = []
-    if (action === 'mark' || action === 'unmark') {
+    if (action === 'note') {
+      const text = (note ?? '').replace(/\s+/g, ' ').trim()
+      if (text.length > NOTE_MAX_CHARS) return { deny: `note is ${text.length} characters; keep it to ${NOTE_MAX_CHARS}` }
+      await setNote($, text ? { text, by: 'claude' } : null)
+      $.ui.invalidate('ui.render')
+    } else if (action === 'mark' || action === 'unmark') {
       const applied = applyToolMarks(messages, (await read($, marksAtom)) ?? [], action, turns)
       refused = applied.refused
       await setMarks($, () => applied.marks)
       $.ui.invalidate('ui.render')
     } else if (action !== 'list') {
-      return { deny: `action must be list, mark or unmark, not ${action}` }
+      return { deny: `action must be list, mark, unmark or note, not ${action}` }
     }
     const cache = await readCache($)
     const when = cache?.isWarm
       ? `The cache goes cold in ${cache.minutesLeft} min; the prune runs on its own once the conversation has sat an hour idle.`
       : 'The cache is cold: the prune runs on its own within a minute.'
     const { turns: weighed } = await weighTurns($, messages)
-    const text = [toolListing(messages, (await read($, marksAtom)) ?? [], weighed), ...refused, when].join('\n')
+    const kept = await read($, noteAtom)
+    const noteLine = kept ? `Note the prune leaves (${kept.by === 'claude' ? 'yours' : "the user's"}): ${kept.text}` : 'No note.'
+    const text = [toolListing(messages, (await read($, marksAtom)) ?? [], weighed), ...refused, noteLine, when].join('\n')
     return { result: text }
   })
 
@@ -693,8 +726,11 @@ export const register: Register = on => {
     // Weighed before the rows change: the request form still holds the cut turns.
     const weighed = new Map((await weighTurns($, e.messages)).turns.map(turn => [turn.index, turn]))
     const cutWeighed = cut.map(turn => weighed.get(turn.index) ?? turn)
-    const messages = pruneMessages(stripImages(e.messages, imageRows, lang), cut, description, lang)
+    const note = description ? { text: description } : ((await read($, noteAtom)) ?? undefined)
+    const messages = pruneMessages(stripImages(e.messages, imageRows, lang), cut, note, lang)
     await setImages($, () => [])
+    // The note is written on the line the turns left: spent once a turn went.
+    if (cut.some(turn => !turn.isCommand)) await setNote($, null)
     // A mark that found no turn stays, and is said: it is never dropped quietly.
     await setMarks($, () => missed)
     const removed = [

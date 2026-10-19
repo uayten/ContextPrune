@@ -154,18 +154,18 @@ test('a mark survives old rows ahead of the list, and one with no turn is report
 
 test('a cut turn goes whole, its tool call and result with it', () => {
   const cut = markedTurns(talk, [{ index: 2, head: 'second' }])
-  const out = pruneMessages(talk, cut, 'the ls run', 'pt')
-  expect(out.map(m => m.text)).toEqual([talk[0].text, 'one', '[removido: 1 turno (pedidos do usuário e respostas do Claude): the ls run]', talk[6].text, 'third', 'three', ''])
+  const out = pruneMessages(talk, cut, undefined, 'pt')
+  expect(out.map(m => m.text)).toEqual([talk[0].text, 'one', '[1 turno removido com /prune]', talk[6].text, 'third', 'three', ''])
   expect(out.some(m => m.toolUses.length || m.toolResults?.length)).toBe(false)
   expect(out[0]).toBe(talk[0])
 })
 
 test('neighbouring cuts share one line; the first keeps its reminders', () => {
   const cut = splitTurns(talk).filter(t => t.index === 0 || t.index === 2)
-  const out = pruneMessages(talk, cut, '', 'pt')
+  const out = pruneMessages(talk, cut, undefined, 'pt')
   expect(out[0]).toEqual({
     role: 'user',
-    text: '<system-reminder>\nrules\n</system-reminder>\n[removido: 2 turnos (pedidos do usuário e respostas do Claude): first | second]',
+    text: '<system-reminder>\nrules\n</system-reminder>\n[2 turnos removidos com /prune]',
     toolUses: [],
   })
   expect(out.length).toBe(5)
@@ -231,8 +231,8 @@ test('commands between marked turns go with them, into one line', () => {
   const marks = [{ index: 2, head: 'second' }, { index: 7, head: 'third' }]
   const { cut } = matchMarks(talk, marks)
   expect(cut.map(t => t.index)).toEqual([2, 6, 7])
-  const out = pruneMessages(talk, cut, '', 'pt')
-  expect(out.map(m => m.text)).toEqual([talk[0].text, 'one', '[removido: 2 turnos (pedidos do usuário e respostas do Claude): second | third]', ''])
+  const out = pruneMessages(talk, cut, undefined, 'pt')
+  expect(out.map(m => m.text)).toEqual([talk[0].text, 'one', '[2 turnos removidos com /prune]', ''])
   // A command next to one mark only stays.
   expect(matchMarks(talk, [marks[0]]).cut.map(t => t.index)).toEqual([2])
 })
@@ -240,8 +240,29 @@ test('commands between marked turns go with them, into one line', () => {
 test('pruning a removed line again adds up its turns instead of nesting', () => {
   const rows = [prompt('[removido: 3 turnos (pedidos do usuário e respostas do Claude): a | b | c]'), reply('x'), prompt('d'), reply('y'), prompt('[removido: e | f]'), prompt('now')]
   const cut = splitTurns(rows).filter(t => t.index < 5)
-  expect(pruneMessages(rows, cut, '', 'pt')[0].text).toBe('[removido: 6 turnos (pedidos do usuário e respostas do Claude): a | b | c | d | e | f]')
+  expect(pruneMessages(rows, cut, undefined, 'pt')[0].text).toBe('[6 turnos removidos com /prune]')
   expect(splitTurns(rows)[0].preview).toBe('[removido: 3 turnos: a | b | c]')
+})
+
+test('the note goes on the newest line and replaces the note it merges', () => {
+  const rows = [
+    prompt('[4 turnos removidos com /prune. Nota do Claude: X feito, falta Y]'), reply('x'),
+    prompt('keep'), reply('k'),
+    prompt('old plan'), reply('p'),
+    prompt('now'),
+  ]
+  const turns = splitTurns(rows)
+  const first = turns.filter(t => t.index === 0)
+  expect(pruneMessages(rows, first, undefined, 'pt')[0].text).toBe('[4 turnos removidos com /prune. Nota do Claude: X feito, falta Y]')
+  const both = turns.filter(t => t.index === 0 || t.index === 4)
+  const out = pruneMessages(rows, both, { text: 'Y feito, falta Z', by: 'claude' }, 'en')
+  expect(out[0].text).toBe("[4 turns removed with /prune. Claude's note: X feito, falta Y]")
+  expect(out[3].text).toBe("[1 turn removed with /prune. Claude's note: Y feito, falta Z]")
+  const merged = pruneMessages(rows, turns.filter(t => t.index < 6), { text: 'only Z left' }, 'en')
+  expect(merged[0].text).toBe('[6 turns removed with /prune. Note: only Z left]')
+  expect(pruneMessages(rows, turns.filter(t => t.index < 6), undefined, 'pt')[0].text).toBe(
+    '[6 turnos removidos com /prune. Nota do Claude: X feito, falta Y]',
+  )
 })
 
 test('the model lists, marks and unmarks its own turns only', () => {
@@ -372,7 +393,7 @@ test('the status and the prune line speak the chosen language', () => {
   expect(statusLabel({ isWarm: true, minutesLeft: 5 }, 'en')).toBe('Conversation is warm - 5 min left')
   expect(statusLabel({ isWarm: false }, 'en')).toBe('Conversation is cold - /prune recommended')
   const cut = markedTurns(talk, [{ index: 2, head: 'second' }])
-  expect(pruneMessages(talk, cut, '', 'en')[2].text).toBe("[removed: 1 turn (user prompts and Claude's replies): second]")
+  expect(pruneMessages(talk, cut, undefined, 'en')[2].text).toBe('[1 turn removed with /prune]')
   const rows = [prompt('look'), reply('ok')]
   expect(stripImages(rows, new Set(), 'en')).toEqual(rows)
 })
@@ -380,7 +401,7 @@ test('the status and the prune line speak the chosen language', () => {
 test('a line left in one language merges into the other', () => {
   const rows = [prompt('[removido: 2 turnos (pedidos do usuário e respostas do Claude): a | b]'), reply('x'), prompt('c'), reply('y'), prompt('now')]
   const cut = splitTurns(rows).filter(t => t.index < 4)
-  expect(pruneMessages(rows, cut, '', 'en')[0].text).toBe("[removed: 3 turns (user prompts and Claude's replies): a | b | c]")
+  expect(pruneMessages(rows, cut, undefined, 'en')[0].text).toBe('[3 turns removed with /prune]')
   const back = [prompt("[removed: 1 turn (user prompts and Claude's replies): a]\n[screenshot removed]"), reply('x'), prompt('now')]
   expect(splitTurns(back)[0].preview).toBe('[removed: 1 turn: a]')
 })
@@ -388,8 +409,8 @@ test('a line left in one language merges into the other', () => {
 test('a prompt with only an image is named in the pane language', () => {
   const rows = [prompt(''), reply('ok'), prompt('now')]
   const cut = splitTurns(rows).filter(t => t.index === 0)
-  expect(pruneMessages(rows, cut, '', 'en')[0].text).toBe("[removed: 1 turn (user prompts and Claude's replies): [image attached]]")
-  expect(pruneMessages(rows, cut, '', 'pt')[0].text).toBe('[removido: 1 turno (pedidos do usuário e respostas do Claude): [imagem anexada]]')
+  expect(pruneMessages(rows, cut, undefined, 'en')[0].text).toBe('[1 turn removed with /prune]')
+  expect(pruneMessages(rows, cut, undefined, 'pt')[0].text).toBe('[1 turno removido com /prune]')
 })
 
 test('the language is read from /prune and from the preferences file', () => {

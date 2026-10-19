@@ -24,6 +24,7 @@ the next message would write the whole conversation again anyway.
   - [The /prune pane](#the-prune-pane)
   - [Screenshots](#screenshots)
   - [Claude's marks](#claudes-marks)
+  - [Note](#note)
   - [Automatic prune](#automatic-prune)
   - [What pruning costs](#what-pruning-costs)
   - [Language](#language)
@@ -60,11 +61,9 @@ start of the prompt.
 - Clicking an item marks or unmarks it. `[x]` is your mark; `[C]`, Claude's.
 - **Prune Now** applies the marks right away. **Unmark All** clears them.
 - The marked turns become a single line, and that line is what the model
-  reads:
-  `[removed: 5 turns (user prompts and Claude's replies): ok, run any command… | how do I choose… | …]`.
-  Marked turns that look adjacent in the pane become one line. The hidden
-  commands between them, like `/prune` and its reply, go with them. Pruning a
-  `[removed: …]` line again adds up the count.
+  reads: `[5 turns removed with /prune]`. Marked turns that look adjacent in
+  the pane become one line. The hidden commands between them, like `/prune`
+  and its reply, go with them. Pruning that line again adds up the count.
 - A weight with no `~` was measured when the turn ended. With `~`, it is
   estimated (text and thinking by length, images by resolution).
 - Marks are saved and survive a restart of Claude.
@@ -91,6 +90,24 @@ such as settled setup, debugging, probes and test confirmations. The list of
 turns and marks reaches Claude only when it uses the tool, not with every
 message. Claude only unmarks its own marks; yours stay as you left them. Its
 marks show as `[C]` in the pane, and you unmark whatever you want to keep.
+
+### Note
+
+Sometimes a prompt that stays, or one that goes, no longer says where the
+work stands: "let's do X and Y" after X and Y are done, or a plan that changed
+partway through. For that, a prune can leave a short note beside the count:
+
+```text
+[12 turns removed with /prune. Claude's note: X and Y done; Z and A left, which came up in testing]
+```
+
+- Claude writes the note with the same tool as its marks, when you ask or
+  when a prompt that stays would mislead. It is at most 300 characters and
+  says where the work stands, not what the removed turns said.
+- The note shows in the pane, above the marks, with a **Delete note** button.
+- It goes on the newest prune's line; lines from earlier prunes keep theirs.
+  A new note replaces the one on a line it absorbs.
+- Your prompt is never rewritten: the note stands apart, naming who wrote it.
 
 ### Automatic prune
 
@@ -125,7 +142,7 @@ send `/prune pt` or `/prune en`, or press the ⚙ at the top of the pane, to the
 right of the bar. The choice applies to every conversation.
 
 It changes what you read: the status, the pane, the notices, and the lines the
-prune leaves (`[removed: …]` or `[removido: …]`, `[screenshot removed]` or
+prune leaves (`[5 turns removed with /prune]` or `[5 turnos removidos com /prune]`, `[screenshot removed]` or
 `[print removido]`). Lines already in the conversation stay as they were
 written, and a later prune adds up their count in either language. What only
 Claude reads (the marks tool) stays in English.
@@ -150,8 +167,8 @@ Tested on the desktop app, version 2.1.299.
 ## How it works
 
 A prune is a `/compact` the plugin answers itself (`session.compact`): it
-hands back the conversation with the marked turns replaced by the
-`[removed: …]` line, without calling the model. The messages that stay whole
+hands back the conversation with the marked turns replaced by the count's
+line, without calling the model. The messages that stay whole
 remain in the cache.
 
 | Part | Hook |
