@@ -389,7 +389,7 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
   return (
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="column">
-        <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1}>
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={2}>
           <Box flexDirection="column">
             {summary && (
               <Text size="footnote" dimColor>
@@ -411,7 +411,7 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
           </Button>
         </Box>
         {isLangOpen && (
-          <Box flexDirection="row" gap={1} alignItems="center" justifyContent="flex-end">
+          <Box flexDirection="row" gap={1} alignItems="center" justifyContent="flex-end" marginTop={1} paddingTop={1}>
             <Text size="footnote" dimColor>
               {t.languageHint}
             </Text>
