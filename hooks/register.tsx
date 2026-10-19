@@ -411,7 +411,7 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
           </Button>
         </Box>
         {isLangOpen && (
-          <Box flexDirection="row" gap={1} alignItems="center" justifyContent="flex-end" marginTop={1} paddingTop={1}>
+          <Box flexDirection="row" gap={1} alignItems="center" justifyContent="flex-end" marginTop={1}>
             <Text size="footnote" dimColor>
               {t.languageHint}
             </Text>
