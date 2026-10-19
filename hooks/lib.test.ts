@@ -6,6 +6,7 @@ import type { SessionMessage } from 'claude-code'
 
 import {
   cacheState,
+  contextBarSvg,
   dataPathFor,
   formatTokens,
   markedTurns,
@@ -390,4 +391,13 @@ test('the language is read from /prune and from the preferences file', () => {
 
 test('both languages carry every text', () => {
   expect(Object.keys(TEXTS.pt).sort()).toEqual(Object.keys(TEXTS.en).sort())
+})
+
+test('the context bar fills to the context and marks its end', () => {
+  const svg = contextBarSvg(500_000, 100_000, 1_000_000)
+  expect(svg).toContain('<rect width="144" height="8" fill="#5b8def"/>')
+  expect(svg).toContain('<rect x="144" width="36" height="8" fill="#d97757"/>')
+  expect(contextBarSvg(500_000, 0, 1_000_000)).not.toContain('#d97757')
+  // Marked past the context, or a context past the window, stays in the track.
+  expect(contextBarSvg(2_000_000, 3_000_000, 1_000_000)).toContain('<rect x="0" width="360"')
 })

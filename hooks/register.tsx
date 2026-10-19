@@ -3,9 +3,10 @@ import type { EngineInterface, PromptOrigin, Register, ResolveInput, SessionMess
 
 import type { ImageRow, Lang, Mark, Meter } from '../types'
 import { DEFAULT_LANG, LANGS, langArg, textsFor } from './i18n'
-import type { SessionRecord } from './lib'
+import type { SessionRecord, Turn } from './lib'
 import {
   cacheState,
+  contextBarSvg,
   dataPathFor,
   anchorOf,
   endsWithAnchor,
@@ -61,26 +62,26 @@ const promptKeyAtom = atom({ plugin: 'context-prune', key: 'promptKey' } as cons
 const turnTokensAtom = atom({ plugin: 'context-prune', key: 'turnTokens' } as const, {})
 const boundaryAtom = atom({ plugin: 'context-prune', key: 'boundary' } as const, null)
 const liveAnchorAtom = atom({ plugin: 'context-prune', key: 'liveAnchor' } as const, null)
-const langAtom = atom({ plugin: 'context-prune', key: 'language' } as const, DEFAULT_LANG)
-
-async function texts($: EngineInterface) {
-  return textsFor((await read($, langAtom)) ?? DEFAULT_LANG)
-}
+// The language holds across conversations: kept in preferences.json and read
+// from there on the first ask of each load, not from $.state (which reads back
+// nothing written before a restart).
+// A file not there (or not read) is asked again: the default is never kept.
+let langKept: Lang | undefined
 
 async function readLang($: EngineInterface): Promise<Lang> {
-  return (await read($, langAtom)) ?? DEFAULT_LANG
+  if (langKept) return langKept
+  const path = await dataPath($)
+  const text = path ? await $.fs.read(preferencesPathFor(path)).catch(() => undefined) : undefined
+  langKept = parsePreferences(text).language
+  return langKept ?? DEFAULT_LANG
 }
 
-// The language holds across conversations: kept in a file, read at each start.
-async function loadLang($: EngineInterface) {
-  const path = await dataPath($)
-  if (!path) return
-  const { language } = parsePreferences(await $.fs.read(preferencesPathFor(path)).catch(() => undefined))
-  if (language) await update($, langAtom, () => language)
+async function texts($: EngineInterface) {
+  return textsFor(await readLang($))
 }
 
 async function setLang($: EngineInterface, language: Lang) {
-  await update($, langAtom, () => language)
+  langKept = language
   const path = await dataPath($)
   if (path) await $.fs.write(preferencesPathFor(path), JSON.stringify({ language }, null, 2) + '\n')
   await showStatus($)
@@ -116,6 +117,10 @@ const IDLE_PRUNE_DELAY_MS = 5_000
 const REDRAW_MS = 60_000
 
 const PANE = 'context-prune-prune'
+// The pane's look: a row lights under the pointer; the context bar's size.
+const ROW_HOVER = 'promptBorder'
+const BAR_WIDTH = 360
+const BAR_HEIGHT = 8
 // The pane lists the newest prompts only.
 const PANE_ROWS = 40
 
@@ -301,13 +306,20 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
   const markedImages = [...[...byTurn].flatMap(([index, rows]) => imageLeft(rows, index)), ...loose].filter(
     row => row.isMarked,
   )
+  const isMarkedBy = (index: number) => markBy.get(index)
+  const check = (isMarked: boolean) => (isMarked ? '☑' : '☐')
   const imageRow = (row: ImageRow) => (
-    <Button key={`image-${row.uuid}`} plain onPress={() => toggleImage($, row.uuid)}>
-      {row.isMarked ? '[x]' : '[ ]'} {`~${formatTokens(row.tokens)}`.padStart(5)}{' '}
-      <Text dimColor>
-        {row.isLegacy ? t.imageLegacy : row.fromTool ? t.imageFromTool : t.imagesAttached(row.count)}
-      </Text>
-    </Button>
+    <Box key={`image-row-${row.uuid}`} flexDirection="row" paddingLeft={3} paddingRight={1} hover={{ backgroundColor: ROW_HOVER }}>
+      <Button key={`image-${row.uuid}`} plain onPress={() => toggleImage($, row.uuid)}>
+        {check(row.isMarked)}{' '}
+        <Text size="footnote" tabular dimColor>
+          {`~${formatTokens(row.tokens)}`.padStart(6)}
+        </Text>{' '}
+        <Text size="footnote" dimColor>
+          {row.isLegacy ? t.imageLegacy : row.fromTool ? t.imageFromTool : t.imagesAttached(row.count)}
+        </Text>
+      </Button>
+    </Box>
   )
 
   const toggle = (index: number, head: string) =>
@@ -319,6 +331,29 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
         : [...current, { index, head, fromEnd: messages.length - index }]
     })
 
+  const turnRow = (turn: Turn) => {
+    const by = isMarkedBy(turn.index)
+    return (
+      <Box key={`turn-row-${turn.index}`} flexDirection="row" paddingX={1} hover={{ backgroundColor: ROW_HOVER }}>
+        <Button key={`turn-${turn.index}`} plain onPress={() => toggle(turn.index, turn.head)}>
+          {check(by !== undefined)}{' '}
+          <Text tabular dimColor>
+            {`${turn.isMeasured ? '' : '~'}${formatTokens(turn.tokens)}`.padStart(6)}
+          </Text>{' '}
+          <Text wrap="truncate-end" dimColor={by === undefined}>
+            {turn.preview || t.imagesAttached(1)}
+          </Text>
+          {by === '[C]' && (
+            <Text size="footnote" color="claude" weight="medium">
+              {' '}
+              Claude
+            </Text>
+          )}
+        </Button>
+      </Box>
+    )
+  }
+
   // Marks by row uuid name rows the pane cannot see ($.session.messages
   // carries no uuids): counted apart.
   const onMessages = marks.filter(mark => mark.uuid !== undefined).length
@@ -329,84 +364,139 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
       t.rewrittenAfterCut(`~${formatTokens(rewrittenTokens(turns, cut, byTurn))}`),
     markedImages.some(row => loose.includes(row)) && t.afterLoose,
   ].filter(Boolean)
-  const cacheLine = !hasMarks
-    ? t.markHint
-    : cache?.isWarm
-      ? t.cacheWarm(cache.minutesLeft, rewritten.join(t.and) || t.firstCut)
-      : t.cacheCold
+  const cacheLine = cache?.isWarm ? t.cacheWarm(cache.minutesLeft, rewritten.join(t.and) || t.firstCut) : t.cacheCold
+  const markedTokens = removedTokens(cut) + markedImages.reduce((sum, row) => sum + row.tokens, 0)
+  const current = await read($, meter)
+  const summary = [
+    cache && (cache.isWarm ? t.summaryWarm(cache.minutesLeft) : t.summaryCold),
+    current?.tokens !== undefined && t.summaryContext(formatTokens(current.tokens), formatTokens(current.window)),
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  // The terminal's table has no Svg: the bar is the desktop's alone.
+  const { Svg } = $.ui.resolve(e) as { Svg?: typeof Box }
+  const bar =
+    current?.tokens !== undefined && Svg ? (
+      <Svg
+        key="context-bar"
+        source={contextBarSvg(current.tokens, markedTokens, current.window)}
+        alt={t.barAlt(formatTokens(current.tokens), formatTokens(markedTokens))}
+        width={BAR_WIDTH}
+        height={BAR_HEIGHT}
+      />
+    ) : null
 
   return (
-    <Box flexDirection="column">
-      {listed.flatMap(turn => [
-        ...imageLeft(byTurn.get(turn.index) ?? [], turn.index).map(imageRow),
-        <Button key={`turn-${turn.index}`} plain onPress={() => toggle(turn.index, turn.head)}>
-          {markBy.get(turn.index) ?? '[ ]'} {`${turn.isMeasured ? '' : '~'}${formatTokens(turn.tokens)}`.padStart(5)}{' '}
-          <Text dimColor>{turn.preview || t.imagesAttached(1)}</Text>
-        </Button>,
-      ])}
-      {loose.length > 0 && <Text dimColor>{t.looseHeader}</Text>}
-      {loose.map(imageRow)}
-      <Text> </Text>
-      {cut.length + markedImages.length > 0 && (
-        <Text>
-          {t.marked(
-            [cut.length > 0 && t.turns(countTurns(cut)), markedImages.length > 0 && t.images(markedImages.length)]
-              .filter(Boolean)
-              .join(t.and),
-            formatTokens(removedTokens(cut) + markedImages.reduce((sum, row) => sum + row.tokens, 0)),
-          )}
-        </Text>
-      )}
-      {[...markBy.values()].includes('[C]') && (
-        <Text dimColor>{t.claudeLegend}</Text>
-      )}
-      {onMessages > 0 && <Text>{t.markedOffList(t.turns(onMessages))}</Text>}
-      {allImages.length > 0 && (
-        <Text dimColor>{t.imageNote(t.mediaRemoved)}</Text>
-      )}
-      <Text dimColor>{cacheLine}</Text>
-      {hasMarks && (
-        <Box flexDirection="row" gap={2}>
-          <Button key="prune" onPress={() => startPrune($, '')}>
-            {t.pruneNow}
-          </Button>
+    <Box flexDirection="column" gap={1}>
+      <Box flexDirection="column">
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center" gap={1}>
+          <Box flexDirection="column">
+            {summary && (
+              <Text size="footnote" dimColor>
+                {summary}
+              </Text>
+            )}
+            {bar}
+          </Box>
           <Button
-            key="clear"
-            onPress={async () => {
-              await setMarks($, () => [])
-              await markAllImages($, false)
+            key="language"
+            plain
+            dimColor
+            onPress={() => {
+              isLangOpen = !isLangOpen
+              $.ui.invalidate('ui.render')
             }}
           >
-            {t.clearAll}
+            {t.languageButton}
           </Button>
         </Box>
+        {isLangOpen && (
+          <Box flexDirection="row" gap={1} alignItems="center" justifyContent="flex-end">
+            <Text size="footnote" dimColor>
+              {t.languageHint}
+            </Text>
+            {LANGS.map(option => (
+              <Button
+                key={`language-${option}`}
+                variant={option === lang ? 'primary' : 'secondary'}
+                onPress={async () => {
+                  isLangOpen = false
+                  await setLang($, option)
+                }}
+              >
+                {textsFor(option).langName}
+              </Button>
+            ))}
+          </Box>
+        )}
+      </Box>
+
+      <Box flexDirection="column" gap={1}>
+        {listed.map(turn => (
+          <Box key={`turn-group-${turn.index}`} flexDirection="column">
+            {turnRow(turn)}
+            {imageLeft(byTurn.get(turn.index) ?? [], turn.index).map(imageRow)}
+          </Box>
+        ))}
+      </Box>
+
+      {loose.length > 0 && (
+        <Box flexDirection="column">
+          <Text size="footnote" weight="medium" dimColor>
+            {t.looseHeader}
+          </Text>
+          {loose.map(imageRow)}
+        </Box>
       )}
-      <Text dimColor>{t.tokensNote}</Text>
-      <Box flexDirection="row" gap={2}>
-        <Button
-          key="language"
-          plain
-          onPress={() => {
-            isLangOpen = !isLangOpen
-            $.ui.invalidate('ui.render')
-          }}
-        >
-          {t.languageButton}
-        </Button>
-        {isLangOpen && <Text dimColor>{t.languageHint}</Text>}
-        {isLangOpen &&
-          LANGS.map(option => (
+
+      {hasMarks ? (
+        <Box flexDirection="column" gap={1} borderStyle="round" borderColor={cache?.isWarm ? 'warning' : 'success'} paddingX={1}>
+          {cut.length + markedImages.length > 0 && (
+            <Text weight="semibold">
+              {t.marked(
+                [cut.length > 0 && t.turns(countTurns(cut)), markedImages.length > 0 && t.images(markedImages.length)]
+                  .filter(Boolean)
+                  .join(t.and),
+                formatTokens(markedTokens),
+              )}
+            </Text>
+          )}
+          {onMessages > 0 && <Text>{t.markedOffList(t.turns(onMessages))}</Text>}
+          <Text size="footnote">{cacheLine}</Text>
+          <Box flexDirection="row" gap={1}>
+            <Button key="prune" variant="primary" onPress={() => startPrune($, '')}>
+              {t.pruneNow}
+            </Button>
             <Button
-              key={`language-${option}`}
-              plain
+              key="clear"
+              variant="secondary"
               onPress={async () => {
-                isLangOpen = false
-                await setLang($, option)
+                await setMarks($, () => [])
+                await markAllImages($, false)
               }}
             >
-              {option === lang ? `[x] ${textsFor(option).langName}` : `[ ] ${textsFor(option).langName}`}
+              {t.clearAll}
             </Button>
-          ))}
+          </Box>
+        </Box>
+      ) : (
+        <Text dimColor>{t.markHint}</Text>
+      )}
+
+      <Box flexDirection="column">
+        {[...markBy.values()].includes('[C]') && (
+          <Text size="caption" dimColor>
+            {t.claudeLegend}
+          </Text>
+        )}
+        {allImages.length > 0 && (
+          <Text size="caption" dimColor>
+            {t.imageNote(t.mediaRemoved)}
+          </Text>
+        )}
+        <Text size="caption" dimColor>
+          {t.tokensNote}
+        </Text>
       </Box>
     </Box>
   )
@@ -419,7 +509,6 @@ export const register: Register = on => {
     const path = await dataPath($)
     const stored = path ? (await readRecords($, path))[await $.session.id()] : undefined
     const lastRequestAt = kept?.lastRequestAt ?? stored?.lastRequestAt ?? null
-    await loadLang($)
     await patchMeter($, { tokens: context.tokens, window: context.window, lastRequestAt })
     if (stored?.marks?.length) await update($, marksAtom, current => (current?.length ? current : stored.marks!))
     if (stored?.images?.length) await update($, imagesAtom, current => (current?.length ? current : stored.images!))

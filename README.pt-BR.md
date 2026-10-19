@@ -115,7 +115,7 @@ na mensagem seguinte. Com o cache de 1 h, gravar custa 2x e ler custa 0,1x.
 ### Idioma
 
 O plugin fala inglês ou português; o padrão é inglês. Para trocar, mande
-`/prune pt` ou `/prune en`, ou aperte o ⚙ no rodapé do painel. A escolha vale
+`/prune pt` ou `/prune en`, ou aperte o ⚙ no topo do painel, à direita da barra. A escolha vale
 para todas as conversas.
 
 Muda o que você lê: o status, o painel, os avisos e as linhas que a poda deixa

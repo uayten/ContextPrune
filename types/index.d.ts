@@ -57,8 +57,6 @@ declare module 'claude-code' {
   interface PluginState {
     'context-prune': {
       meter: Meter | null
-      /** The language chosen with /prune en|pt or the pane's ⚙; kept in preferences.json. */
-      language: Lang
       marks: Mark[]
       /**
        * Rows that carry an image (a pasted print, a tool's screenshot); a

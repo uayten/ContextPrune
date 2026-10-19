@@ -672,3 +672,26 @@ export function withEstimates(turns: readonly Turn[], estimates: readonly { key:
     return turn
   })
 }
+
+// --- pane ---------------------------------------------------------------------
+
+// The context bar the pane draws on the desktop: the window as a track, the
+// context in it, and the part marked for removal at its end. Plain colors
+// that read on a light and a dark theme alike (an image takes no theme).
+export function contextBarSvg(tokens: number, marked: number, window: number): string {
+  const W = 360
+  const H = 8
+  const total = Math.max(window, tokens, 1)
+  const used = Math.round((Math.min(tokens, total) / total) * W)
+  const cut = Math.min(used, Math.round((Math.max(0, marked) / total) * W))
+  const kept = used - cut
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">`,
+    `<rect width="${W}" height="${H}" rx="${H / 2}" fill="#8a8a8a" fill-opacity="0.25"/>`,
+    `<clipPath id="r"><rect width="${W}" height="${H}" rx="${H / 2}"/></clipPath>`,
+    `<g clip-path="url(#r)">`,
+    `<rect width="${kept}" height="${H}" fill="#5b8def"/>`,
+    cut > 0 ? `<rect x="${kept}" width="${cut}" height="${H}" fill="#d97757"/>` : '',
+    `</g></svg>`,
+  ].join('')
+}

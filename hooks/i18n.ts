@@ -41,6 +41,10 @@ const en = {
   imagesAttached: (n: number) => (n === 1 ? '[image attached]' : `[${n} images attached]`),
   looseHeader: 'Screenshots with no turn found:',
 
+  summaryWarm: (minutes: number) => `Cache warm · ${minutes} min`,
+  summaryCold: 'Cache cold',
+  summaryContext: (tokens: string, window: string) => `context ${tokens} / ${window}`,
+  barAlt: (tokens: string, marked: string) => `Context ${tokens}, of which ${marked} marked`,
   markHint: 'Mark the turns or screenshots to remove.',
   rewrittenAfterCut: (tokens: string) => `${tokens} after the first cut`,
   afterLoose: 'what comes after the screenshot with no turn',
@@ -95,6 +99,10 @@ const pt: Texts = {
   imagesAttached: n => (n === 1 ? '[imagem anexada]' : `[${n} imagens anexadas]`),
   looseHeader: 'Prints sem turno identificado:',
 
+  summaryWarm: minutes => `Cache quente · ${minutes} min`,
+  summaryCold: 'Cache frio',
+  summaryContext: (tokens, window) => `contexto ${tokens} / ${window}`,
+  barAlt: (tokens, marked) => `Contexto ${tokens}, dos quais ${marked} marcados`,
   markHint: 'Marque os turnos ou os prints a remover.',
   rewrittenAfterCut: tokens => `${tokens} depois do 1º corte`,
   afterLoose: 'o que vem depois do print sem turno',
