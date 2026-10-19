@@ -127,6 +127,16 @@ export function pruneDescription(instructions: string | undefined): string | und
   return instructions.slice(PRUNE_TAG.length).trim()
 }
 
+// An organization that manages Claude Code (managed policy settings) passes
+// session.compact over the plugins a person installs; only a plugin its
+// policy names runs it. Elsewhere a prune's /compact would reach core, which
+// summarizes with the model, so a prune starts only with no policy at all or
+// one that names this plugin.
+export function isPruneAllowed(policy: unknown, pluginName: string): boolean {
+  if (!policy || typeof policy !== 'object' || Object.keys(policy).length === 0) return true
+  return JSON.stringify(policy).includes(pluginName)
+}
+
 // One prompt of the person's and everything that answered it (the model's
 // messages, tool calls and their results), up to the next prompt.
 export type Turn = {

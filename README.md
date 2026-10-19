@@ -185,9 +185,10 @@ The language is kept in `preferences.json`, in the same folder. See
 - In organizations that manage Claude Code (Team and Enterprise plans with
   managed settings), Claude Code does not pass `session.compact` to plugins a
   person installs on their own. There the status, the pane and the marks
-  work, but a prune becomes an ordinary `/compact`, with a summary written by
-  the model, unless the organization lists the plugin in its managed
-  settings.
+  work, but a prune would become an ordinary `/compact`, with a summary
+  written by the model. So when there are managed settings that don't name
+  `context-prune`, the plugin doesn't start a prune and says so in the pane.
+  An administrator allows it by listing the plugin in those settings.
 - If you open a cold conversation and send a screenshot or attachment in the
   first few seconds, before the prune runs, the message goes out unpruned.
   The prune waits for the conversation to go cold again.

@@ -29,6 +29,7 @@ import {
   measureTurn,
   recordTurn,
   withMeasured,
+  isPruneAllowed,
   apiEstimates,
   withEstimates,
   normalizeImages,
@@ -340,6 +341,13 @@ test('an image estimate past the measured weight leaves the turn estimated', () 
   const images = new Map([[7, [{ uuid: 'i', key: 'third', tokens: 1600, count: 1 }]]])
   const out = withMeasured(turns, { third: 1400 }, images)
   expect([out[3].tokens, out[3].isMeasured]).toEqual([turns[3].tokens, undefined])
+})
+
+test('a managed policy that does not name the plugin keeps a prune from starting', () => {
+  expect(isPruneAllowed({}, 'context-prune')).toBe(true)
+  expect(isPruneAllowed(undefined, 'context-prune')).toBe(true)
+  expect(isPruneAllowed({ permissions: { deny: ['Bash'] } }, 'context-prune')).toBe(false)
+  expect(isPruneAllowed({ enabledPlugins: { 'context-prune@fofuxo-context-prune': true } }, 'context-prune')).toBe(true)
 })
 
 test('the request form weighs each turn with its thinking', () => {

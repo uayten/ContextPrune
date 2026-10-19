@@ -29,6 +29,7 @@ import {
   parseRecords,
   preferencesPathFor,
   PRUNE_TAG,
+  isPruneAllowed,
   pruneDescription,
   pruneMessages,
   removedTokens,
@@ -233,10 +234,21 @@ async function hasPending($: EngineInterface) {
   return marks.length > 0 || (await readImages($)).some(row => row.isMarked)
 }
 
+// Whether this session's organization keeps a prune from running (isPruneAllowed).
+async function isPruneBlocked($: EngineInterface) {
+  const policy = await $.settings.read({ source: 'policy' }).catch(() => ({}))
+  return !isPruneAllowed(policy, $.plugin.name)
+}
+
 // /compact can only start between turns, as a command of its own: queued once
 // the hook that asks has returned. `then` runs after it, whatever came of it.
 function startPrune($: EngineInterface, description: string, then?: () => Promise<unknown>) {
   $.clock.after(0, async () => {
+    if (await isPruneBlocked($)) {
+      $.ui.toast((await texts($)).pruneBlocked)
+      await then?.()
+      return
+    }
     await $.command.run({ command: 'compact', args: `${PRUNE_TAG} ${description}`.trim() }).catch(async error => {
       $.ui.toast((await texts($)).pruneFailed(error, PRUNE_TAG))
     })
@@ -261,7 +273,7 @@ let idlePruneFor: number | null | undefined
 async function pruneWhenIdle($: EngineInterface) {
   const lastRequestAt = (await read($, meter))?.lastRequestAt
   if (lastRequestAt === undefined || idlePruneFor === lastRequestAt) return
-  if (!shouldAutoPrune(await hasPending($), await readCache($))) return
+  if (!shouldAutoPrune(await hasPending($), await readCache($)) || (await isPruneBlocked($))) return
   idlePruneFor = lastRequestAt
   startPrune($, '')
 }
@@ -463,6 +475,7 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
           )}
           {onMessages > 0 && <Text>{t.markedOffList(t.turns(onMessages))}</Text>}
           <Text size="footnote">{cacheLine}</Text>
+          {(await isPruneBlocked($)) && <Text size="footnote">{t.pruneBlocked}</Text>}
           <Box flexDirection="row" gap={1}>
             <Button key="prune" variant="primary" onPress={() => startPrune($, '')}>
               {t.pruneNow}
@@ -601,7 +614,8 @@ export const register: Register = on => {
     // prune first and send the prompt again as the person's. A prompt with
     // images or files goes as it is (a plugin's prompt carries no media), and
     // the idle prune runs after its answer has gone cold again.
-    if (isTyped(e.origin) && !e.attachments?.length && shouldAutoPrune(await hasPending($), await readCache($))) {
+    const isHeld = isTyped(e.origin) && !e.attachments?.length && shouldAutoPrune(await hasPending($), await readCache($))
+    if (isHeld && !(await isPruneBlocked($))) {
       const text = e.text
       startPrune($, '', () => $.prompt.submit({ text, asUser: true }))
       return { drop: (await texts($)).autoPruneDrop }

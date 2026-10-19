@@ -177,9 +177,11 @@ idioma fica em `preferences.json`, na mesma pasta. Veja
 - Em contas de organização que gerenciam o Claude Code (planos Team e
   Enterprise com configurações gerenciadas), o Claude Code não passa o
   `session.compact` a plugins que a pessoa instala por conta própria. Ali o
-  status, o painel e as marcas funcionam, mas a poda vira um `/compact`
-  comum, com resumo feito pelo modelo, a menos que a organização liste o
-  plugin nas configurações gerenciadas.
+  status, o painel e as marcas funcionam, mas a poda viraria um `/compact`
+  comum, com resumo feito pelo modelo. Por isso, quando há configurações
+  gerenciadas que não citam o `context-prune`, o plugin não começa a poda e
+  avisa no painel. Um administrador libera a poda listando o plugin nessas
+  configurações.
 - Se você abrir uma conversa fria e mandar um print ou anexo nos primeiros
   segundos, antes de a poda rodar, a mensagem segue sem podar. A poda espera
   a conversa esfriar de novo.

@@ -31,6 +31,8 @@ const en = {
     'Pane open: mark the turns and press Prune Now, or leave them marked for the prune to run once the conversation goes cold.',
   pruneFailed: (error: unknown, tag: string) => `/prune did not start (${error}). Send /compact ${tag}`,
   autoPruneDrop: 'context-prune: the conversation is cold, pruning what was marked before sending',
+  pruneBlocked:
+    "Prune off: this organization manages Claude Code and keeps /compact from installed plugins, so Claude Code would write a summary instead. An administrator can list context-prune in the managed settings.",
 
   turns: (n: number) => (n === 1 ? '1 turn' : `${n} turns`),
   images: (n: number) => (n === 1 ? '1 screenshot' : `${n} screenshots`),
@@ -89,6 +91,8 @@ const pt: Texts = {
     'Painel aberto: marque os turnos e aperte Podar Agora, ou deixe marcado para a poda rodar quando a conversa esfriar.',
   pruneFailed: (error, tag) => `/prune não começou (${error}). Mande /compact ${tag}`,
   autoPruneDrop: 'context-prune: conversa fria, podando o que estava marcado antes de enviar',
+  pruneBlocked:
+    'Poda desligada: esta organização gerencia o Claude Code e não passa o /compact a plugins instalados, então o Claude Code faria um resumo no lugar. Um administrador pode listar o context-prune nas configurações gerenciadas.',
 
   turns: n => (n === 1 ? '1 turno' : `${n} turnos`),
   images: n => (n === 1 ? '1 print' : `${n} prints`),
