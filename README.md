@@ -187,6 +187,30 @@ folder. Conversations idle for more than 30 days are dropped from the file.
 The language is kept in `preferences.json`, in the same folder. See
 [PRIVACY.md](PRIVACY.md).
 
+### What it runs and touches on your machine
+
+- **Files it writes:** only `sessions.json` and `preferences.json`, in
+  `<config>/plugins/data/context-prune/`, where `<config>` is
+  `CLAUDE_CONFIG_DIR` or, without it, `~/.claude`. Neither is a build,
+  start-up, settings or instructions file another tool reads.
+- **Environment variables it reads:** `CLAUDE_CONFIG_DIR`, `HOME` and
+  `USERPROFILE`, only to find that folder. No credential is read, and
+  nothing leaves the machine.
+- **Command it runs itself:** `/compact context-prune …`, the prune itself,
+  which the plugin's `session.compact` hook answers without calling the
+  model. It runs when you press Prune Now, or when the conversation has gone
+  cold with turns marked.
+- **Prompt it submits:** only your own message, unchanged, sent again as
+  yours after the automatic prune held it (see
+  [Automatic prune](#automatic-prune)). It never submits conversation text
+  or anything else.
+- **Tool it answers:** only its own, `prune_marks`. No other tool call is
+  answered in place of the tool.
+- **`session.append` hook:** reads each new row of the conversation to note
+  which ones carry an image and the turn's prompt. It does not change the row.
+- **Prompt context:** adds to each prompt one line with the context size
+  (`context-prune: context 45k / 1M (5%) tokens.`).
+
 ## Known limitations
 
 - The cache state is worked out with the 1-hour TTL. On account usage

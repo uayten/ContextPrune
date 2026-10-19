@@ -181,6 +181,30 @@ da pasta do plugin. Conversas paradas há mais de 30 dias saem do arquivo. O
 idioma fica em `preferences.json`, na mesma pasta. Veja
 [PRIVACY.md](PRIVACY.md) (em inglês).
 
+### O que ele roda e mexe na sua máquina
+
+- **Arquivos que grava:** só `sessions.json` e `preferences.json`, em
+  `<config>/plugins/data/context-prune/`, onde `<config>` é
+  `CLAUDE_CONFIG_DIR` ou, sem ela, `~/.claude`. Nenhum é arquivo de build,
+  de inicialização, de configuração ou de instruções que outra ferramenta lê.
+- **Variáveis de ambiente que lê:** `CLAUDE_CONFIG_DIR`, `HOME` e
+  `USERPROFILE`, só para achar essa pasta. Nenhuma credencial é lida, e nada
+  sai da máquina.
+- **Comando que roda sozinho:** `/compact context-prune …`, a própria poda,
+  que o hook `session.compact` do plugin responde sem chamar o modelo. Roda
+  quando você aperta Podar Agora ou quando a conversa esfriou com turnos
+  marcados.
+- **Prompt que envia:** só a sua própria mensagem, sem mudança, reenviada
+  como sua depois da poda automática que a segurou (veja
+  [Poda automática](#poda-automática)). Nunca envia texto da conversa nem
+  outra coisa.
+- **Ferramenta que responde:** só a sua própria, `prune_marks`. Nenhuma
+  outra chamada de ferramenta é respondida no lugar da ferramenta.
+- **Hook `session.append`:** lê cada linha nova da conversa para anotar quais
+  têm imagem e o prompt do turno. Não muda a linha.
+- **Contexto do prompt:** junta a cada prompt uma linha com o tamanho do
+  contexto (`context-prune: context 45k / 1M (5%) tokens.`).
+
 ## Limitações conhecidas
 
 - O estado do cache é calculado com o TTL de 1 h. Em uso excedente da conta o
