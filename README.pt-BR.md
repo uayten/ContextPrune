@@ -1,6 +1,6 @@
 # Context Prune
 
-**Português** · [English](README.md) (em desenvolvimento)
+**Português** · [English](README.md)
 
 Plugin do Claude Code (app desktop) para retomar conversas longas gastando
 menos tokens depois que a conversa esfriou. Ele apaga do histórico os turnos
@@ -159,7 +159,8 @@ sem chamar o modelo. As mensagens que ficam inteiras continuam no cache.
 Os dados de cada conversa (hora da última resposta, marcas, prints, pesos
 medidos) ficam em `~/.claude/plugins/data/context-prune/sessions.json`, fora
 da pasta do plugin. Conversas paradas há mais de 30 dias saem do arquivo. O
-idioma fica em `preferences.json`, na mesma pasta.
+idioma fica em `preferences.json`, na mesma pasta. Veja
+[PRIVACY.md](PRIVACY.md) (em inglês).
 
 ## Limitações conhecidas
 
@@ -171,7 +172,14 @@ idioma fica em `preferences.json`, na mesma pasta.
   conversa no formato que vai para a API, com o raciocínio. O primeiro turno
   depois de uma poda também fica estimado.
 - O peso de uma imagem é lido do cabeçalho do PNG. Outros formatos contam o
-  máximo, 1,6k.
+  máximo, 1,6k. Se a estimativa das imagens de um turno passa do peso medido
+  dele, o turno fica estimado (`~`).
+- Em contas de organização que gerenciam o Claude Code (planos Team e
+  Enterprise com configurações gerenciadas), o Claude Code não passa o
+  `session.compact` a plugins que a pessoa instala por conta própria. Ali o
+  status, o painel e as marcas funcionam, mas a poda vira um `/compact`
+  comum, com resumo feito pelo modelo, a menos que a organização liste o
+  plugin nas configurações gerenciadas.
 - Se você abrir uma conversa fria e mandar um print ou anexo nos primeiros
   segundos, antes de a poda rodar, a mensagem segue sem podar. A poda espera
   a conversa esfriar de novo.
@@ -187,6 +195,7 @@ idioma fica em `preferences.json`, na mesma pasta.
 - `hooks/register.tsx`: os hooks e o painel.
 - `hooks/lib.ts`: a lógica pura (turnos, marcas, poda, prints, pesos),
   testada em `hooks/lib.test.ts`.
+- `hooks/i18n.ts`: os textos de cada idioma.
 - `types/index.d.ts`: o contrato do `$.state`.
 
 Para testar sem instalar, carregue a pasta numa sessão:

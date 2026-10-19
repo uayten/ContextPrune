@@ -595,6 +595,9 @@ export function recordTurn(weights: Record<string, number>, key: string, tokens:
 
 // The turns with their measured weight where there is one: what the turn's
 // own images are estimated at is left to their rows, so nothing counts twice.
+// When that leaves less than the turn's own text is estimated at, the image
+// estimate is the one that is off (a JPEG counts as the largest image), and
+// the turn keeps its estimate rather than reading as nothing.
 export function withMeasured(
   turns: readonly Turn[],
   weights: Readonly<Record<string, number>>,
@@ -605,7 +608,9 @@ export function withMeasured(
     const weight = key === '' || turn.isCommand ? undefined : weights[key]
     if (weight === undefined) return turn
     const inImages = (images.get(turn.index) ?? []).reduce((sum, row) => sum + row.tokens, 0)
-    return { ...turn, tokens: Math.max(0, weight - inImages), isMeasured: true }
+    const own = weight - inImages
+    if (inImages > 0 && own < turn.tokens) return turn
+    return { ...turn, tokens: own, isMeasured: true }
   })
 }
 

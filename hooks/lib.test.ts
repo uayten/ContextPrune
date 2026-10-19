@@ -335,6 +335,13 @@ test('measured weights replace the estimate, less the turn images rows', () => {
   ])
 })
 
+test('an image estimate past the measured weight leaves the turn estimated', () => {
+  const turns = splitTurns(talk)
+  const images = new Map([[7, [{ uuid: 'i', key: 'third', tokens: 1600, count: 1 }]]])
+  const out = withMeasured(turns, { third: 1400 }, images)
+  expect([out[3].tokens, out[3].isMeasured]).toEqual([turns[3].tokens, undefined])
+})
+
 test('the request form weighs each turn with its thinking', () => {
   const api = [
     { role: 'user' as const, content: [{ type: 'text', text: '<system-reminder>\nr\n</system-reminder>' }, { type: 'text', text: 'first' }] },
