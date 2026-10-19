@@ -25,6 +25,7 @@ próxima mensagem gravaria a conversa inteira de novo de qualquer jeito.
   - [Marcas do Claude](#marcas-do-claude)
   - [Poda automática](#poda-automática)
   - [Quanto custa podar](#quanto-custa-podar)
+  - [Idioma](#idioma)
 - [Instalação](#instalação)
 - [Como funciona por dentro](#como-funciona-por-dentro)
 - [Limitações conhecidas](#limitações-conhecidas)
@@ -111,6 +112,18 @@ na mensagem seguinte. Com o cache de 1 h, gravar custa 2x e ler custa 0,1x.
   contexto estiver perto do limite. O painel mostra essa conta antes de você
   apertar.
 
+### Idioma
+
+O plugin fala inglês ou português; o padrão é inglês. Para trocar, mande
+`/prune pt` ou `/prune en`, ou aperte o ⚙ no rodapé do painel. A escolha vale
+para todas as conversas.
+
+Muda o que você lê: o status, o painel, os avisos e as linhas que a poda deixa
+(`[removido: …]` ou `[removed: …]`, `[print removido]` ou
+`[screenshot removed]`). As linhas que já estão na conversa ficam como foram
+escritas, e uma poda seguinte soma a contagem delas em qualquer idioma. O que
+só o Claude lê (a ferramenta de marcas) fica em inglês.
+
 ## Instalação
 
 Num terminal com o Claude Code, ou no app desktop, digite:
@@ -139,13 +152,14 @@ sem chamar o modelo. As mensagens que ficam inteiras continuam no cache.
 | Status e tamanho do contexto | `session.start`, `session.attach`, `session.measure`, `turn.complete`, `prompt.submit` |
 | Registro dos prints e do prompt de cada um | `session.append` |
 | Peso medido de cada turno | `turn.complete` (diferença do contexto entre o fim de um turno e o do anterior) |
-| Painel | `command.run` (`/prune`) e `ui.render` (`Pane`) |
+| Painel e idioma | `command.run` (`/prune`, `/prune en\|pt`) e `ui.render` (`Pane`) |
 | Marcas do Claude | `$.tool.register` e `tool.call` (`mcp__context-prune__prune_marks`) |
 | Poda | `session.compact`; a automática começa no `prompt.submit` |
 
 Os dados de cada conversa (hora da última resposta, marcas, prints, pesos
 medidos) ficam em `~/.claude/plugins/data/context-prune/sessions.json`, fora
-da pasta do plugin. Conversas paradas há mais de 30 dias saem do arquivo.
+da pasta do plugin. Conversas paradas há mais de 30 dias saem do arquivo. O
+idioma fica em `preferences.json`, na mesma pasta.
 
 ## Limitações conhecidas
 

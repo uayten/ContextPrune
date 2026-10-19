@@ -1,5 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
+import { langArg, TEXTS } from './i18n'
+
 import type { SessionMessage } from 'claude-code'
 
 import {
@@ -36,6 +38,8 @@ import {
   splitTurns,
   statusLabel,
   updateRecord,
+  parsePreferences,
+  preferencesPathFor,
 } from './lib'
 
 const MIN = 60_000
@@ -90,9 +94,9 @@ test('a missing or broken data file reads as empty', () => {
 })
 
 test('status reads warm with minutes left, or cold with /prune', () => {
-  expect(statusLabel(null)).toBe(undefined)
-  expect(statusLabel({ isWarm: true, minutesLeft: 58 })).toBe('Conversa está quente - 58 min restantes')
-  expect(statusLabel({ isWarm: false })).toBe('Conversa está fria - /prune recomendado')
+  expect(statusLabel(null, 'pt')).toBe(undefined)
+  expect(statusLabel({ isWarm: true, minutesLeft: 58 }, 'pt')).toBe('Conversa está quente - 58 min restantes')
+  expect(statusLabel({ isWarm: false }, 'pt')).toBe('Conversa está fria - /prune recomendado')
 })
 
 const prompt = (text: string, handle?: string): SessionMessage => ({ role: 'user', text, toolUses: [], handle })
@@ -126,7 +130,7 @@ const talk: SessionMessage[] = [
 test('turns run from a prompt to the next, tool results inside', () => {
   const turns = splitTurns(talk)
   expect(turns.map(t => [t.index, t.end])).toEqual([[0, 2], [2, 6], [6, 7], [7, 9], [9, 10]])
-  expect(turns.map(t => t.preview)).toEqual(['first', 'second', '<command-name>/prune</command-name>', 'third', '[imagem anexada]'])
+  expect(turns.map(t => t.preview)).toEqual(['first', 'second', '<command-name>/prune</command-name>', 'third', ''])
   expect(turns.map(t => t.isCommand)).toEqual([false, false, true, false, false])
 })
 
@@ -148,7 +152,7 @@ test('a mark survives old rows ahead of the list, and one with no turn is report
 
 test('a cut turn goes whole, its tool call and result with it', () => {
   const cut = markedTurns(talk, [{ index: 2, head: 'second' }])
-  const out = pruneMessages(talk, cut, 'the ls run')
+  const out = pruneMessages(talk, cut, 'the ls run', 'pt')
   expect(out.map(m => m.text)).toEqual([talk[0].text, 'one', '[removido: 1 turno (pedidos do usuário e respostas do Claude): the ls run]', talk[6].text, 'third', 'three', ''])
   expect(out.some(m => m.toolUses.length || m.toolResults?.length)).toBe(false)
   expect(out[0]).toBe(talk[0])
@@ -156,7 +160,7 @@ test('a cut turn goes whole, its tool call and result with it', () => {
 
 test('neighbouring cuts share one line; the first keeps its reminders', () => {
   const cut = splitTurns(talk).filter(t => t.index === 0 || t.index === 2)
-  const out = pruneMessages(talk, cut, '')
+  const out = pruneMessages(talk, cut, '', 'pt')
   expect(out[0]).toEqual({
     role: 'user',
     text: '<system-reminder>\nrules\n</system-reminder>\n[removido: 2 turnos (pedidos do usuário e respostas do Claude): first | second]',
@@ -192,7 +196,7 @@ test('images are found at the top and inside tool results', () => {
 
 test('rows with images lose the handle (and so the image), keep text and tool blocks', () => {
   const rows = [prompt('look', 'p1'), reply('ok', 'a1'), prompt('', 'p2'), { ...result('t1'), handle: 'r1' }]
-  const out = stripImages(rows, new Set(['p1', 'p2', 'r1']))
+  const out = stripImages(rows, new Set(['p1', 'p2', 'r1']), 'pt')
   expect(out[0]).toEqual({ role: 'user', text: 'look\n[print removido]', toolUses: [] })
   expect(out[1]).toBe(rows[1])
   expect(out[2].text).toBe('[print removido]')
@@ -203,7 +207,7 @@ test('rows with images lose the handle (and so the image), keep text and tool bl
 
 test('the pane preview leaves out a removed print, the model text keeps it', () => {
   const turns = splitTurns([prompt('look at this\n[print removido]'), reply('ok'), prompt('[print removido]'), reply('ok')])
-  expect(turns.map(t => t.preview)).toEqual(['look at this', '[imagem anexada]'])
+  expect(turns.map(t => t.preview)).toEqual(['look at this', ''])
   expect(turns[0].head).toBe('look at this\n[print removido]')
 })
 
@@ -225,7 +229,7 @@ test('commands between marked turns go with them, into one line', () => {
   const marks = [{ index: 2, head: 'second' }, { index: 7, head: 'third' }]
   const { cut } = matchMarks(talk, marks)
   expect(cut.map(t => t.index)).toEqual([2, 6, 7])
-  const out = pruneMessages(talk, cut, '')
+  const out = pruneMessages(talk, cut, '', 'pt')
   expect(out.map(m => m.text)).toEqual([talk[0].text, 'one', '[removido: 2 turnos (pedidos do usuário e respostas do Claude): second | third]', ''])
   // A command next to one mark only stays.
   expect(matchMarks(talk, [marks[0]]).cut.map(t => t.index)).toEqual([2])
@@ -234,7 +238,7 @@ test('commands between marked turns go with them, into one line', () => {
 test('pruning a removed line again adds up its turns instead of nesting', () => {
   const rows = [prompt('[removido: 3 turnos (pedidos do usuário e respostas do Claude): a | b | c]'), reply('x'), prompt('d'), reply('y'), prompt('[removido: e | f]'), prompt('now')]
   const cut = splitTurns(rows).filter(t => t.index < 5)
-  expect(pruneMessages(rows, cut, '')[0].text).toBe('[removido: 6 turnos (pedidos do usuário e respostas do Claude): a | b | c | d | e | f]')
+  expect(pruneMessages(rows, cut, '', 'pt')[0].text).toBe('[removido: 6 turnos (pedidos do usuário e respostas do Claude): a | b | c | d | e | f]')
   expect(splitTurns(rows)[0].preview).toBe('[removido: 3 turnos: a | b | c]')
 })
 
@@ -248,7 +252,7 @@ test('the model lists, marks and unmarks its own turns only', () => {
   expect(toolListing(talk, marked.marks)).toContain('#7 [C]')
   const unmarked = applyToolMarks(talk, marked.marks, 'unmark', [7, 2])
   expect(unmarked.marks).toEqual([{ index: 2, head: 'second' }])
-  expect(unmarked.refused).toEqual(['#2: marcado pelo usuário; só ele desmarca'])
+  expect(unmarked.refused).toEqual(['#2: marked by the user; only the user unmarks it'])
 })
 
 // A PNG's first 24 bytes, its size in the header, as base64.
@@ -346,4 +350,44 @@ test('the request form weighs each turn with its thinking', () => {
   expect(turns[0].tokens).toBe(estimates[0].tokens)
   expect(turns[1].tokens).toBe(Math.max(splitTurns(talk)[1].tokens, estimates[1].tokens))
   expect(turns[3].tokens).toBe(splitTurns(talk)[3].tokens)
+})
+
+test('the status and the prune line speak the chosen language', () => {
+  expect(statusLabel({ isWarm: true, minutesLeft: 5 }, 'en')).toBe('Conversation is warm - 5 min left')
+  expect(statusLabel({ isWarm: false }, 'en')).toBe('Conversation is cold - /prune recommended')
+  const cut = markedTurns(talk, [{ index: 2, head: 'second' }])
+  expect(pruneMessages(talk, cut, '', 'en')[2].text).toBe("[removed: 1 turn (user prompts and Claude's replies): second]")
+  const rows = [prompt('look'), reply('ok')]
+  expect(stripImages(rows, new Set(), 'en')).toEqual(rows)
+})
+
+test('a line left in one language merges into the other', () => {
+  const rows = [prompt('[removido: 2 turnos (pedidos do usuário e respostas do Claude): a | b]'), reply('x'), prompt('c'), reply('y'), prompt('now')]
+  const cut = splitTurns(rows).filter(t => t.index < 4)
+  expect(pruneMessages(rows, cut, '', 'en')[0].text).toBe("[removed: 3 turns (user prompts and Claude's replies): a | b | c]")
+  const back = [prompt("[removed: 1 turn (user prompts and Claude's replies): a]\n[screenshot removed]"), reply('x'), prompt('now')]
+  expect(splitTurns(back)[0].preview).toBe('[removed: 1 turn: a]')
+})
+
+test('a prompt with only an image is named in the pane language', () => {
+  const rows = [prompt(''), reply('ok'), prompt('now')]
+  const cut = splitTurns(rows).filter(t => t.index === 0)
+  expect(pruneMessages(rows, cut, '', 'en')[0].text).toBe("[removed: 1 turn (user prompts and Claude's replies): [image attached]]")
+  expect(pruneMessages(rows, cut, '', 'pt')[0].text).toBe('[removido: 1 turno (pedidos do usuário e respostas do Claude): [imagem anexada]]')
+})
+
+test('the language is read from /prune and from the preferences file', () => {
+  expect(langArg(' PT ')).toBe('pt')
+  expect(langArg('en')).toBe('en')
+  expect(langArg('')).toBe(undefined)
+  expect(langArg('fr')).toBe(undefined)
+  expect(parsePreferences('{"language":"pt"}')).toEqual({ language: 'pt' })
+  expect(parsePreferences('{"language":"fr"}')).toEqual({})
+  expect(parsePreferences('broken')).toEqual({})
+  expect(parsePreferences(undefined)).toEqual({})
+  expect(preferencesPathFor('/c/plugins/data/context-prune/sessions.json')).toBe('/c/plugins/data/context-prune/preferences.json')
+})
+
+test('both languages carry every text', () => {
+  expect(Object.keys(TEXTS.pt).sort()).toEqual(Object.keys(TEXTS.en).sort())
 })

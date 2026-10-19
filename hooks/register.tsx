@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PromptOrigin, Register, ResolveInput, SessionMessage } from 'claude-code'
 
-import type { ImageRow, Mark, Meter } from '../types'
+import type { ImageRow, Lang, Mark, Meter } from '../types'
+import { DEFAULT_LANG, LANGS, langArg, textsFor } from './i18n'
 import type { SessionRecord } from './lib'
 import {
   cacheState,
@@ -23,7 +24,9 @@ import {
   matchMarks,
   toolListing,
   modelNote,
+  parsePreferences,
   parseRecords,
+  preferencesPathFor,
   PRUNE_TAG,
   pruneDescription,
   pruneMessages,
@@ -58,6 +61,34 @@ const promptKeyAtom = atom({ plugin: 'context-prune', key: 'promptKey' } as cons
 const turnTokensAtom = atom({ plugin: 'context-prune', key: 'turnTokens' } as const, {})
 const boundaryAtom = atom({ plugin: 'context-prune', key: 'boundary' } as const, null)
 const liveAnchorAtom = atom({ plugin: 'context-prune', key: 'liveAnchor' } as const, null)
+const langAtom = atom({ plugin: 'context-prune', key: 'language' } as const, DEFAULT_LANG)
+
+async function texts($: EngineInterface) {
+  return textsFor((await read($, langAtom)) ?? DEFAULT_LANG)
+}
+
+async function readLang($: EngineInterface): Promise<Lang> {
+  return (await read($, langAtom)) ?? DEFAULT_LANG
+}
+
+// The language holds across conversations: kept in a file, read at each start.
+async function loadLang($: EngineInterface) {
+  const path = await dataPath($)
+  if (!path) return
+  const { language } = parsePreferences(await $.fs.read(preferencesPathFor(path)).catch(() => undefined))
+  if (language) await update($, langAtom, () => language)
+}
+
+async function setLang($: EngineInterface, language: Lang) {
+  await update($, langAtom, () => language)
+  const path = await dataPath($)
+  if (path) await $.fs.write(preferencesPathFor(path), JSON.stringify({ language }, null, 2) + '\n')
+  await showStatus($)
+  $.ui.invalidate('ui.render')
+}
+
+// Whether the pane shows the language choice (its ⚙ pressed).
+let isLangOpen = false
 
 // The rows the model reads now, as session.compact's messages line them up.
 async function liveMessages($: EngineInterface) {
@@ -71,7 +102,7 @@ const MARK_TOOL_ID = 'mcp__context-prune__prune_marks'
 const MARK_TOOL_DESCRIPTION = [
   "Marks finished turns of this conversation for removal from the context (the Context Prune plugin's /prune).",
   'A turn is one user prompt and everything that answered it, tool calls included.',
-  'Marked turns are replaced by one line, `[removido: N turnos (...): <prompt heads>]`, once the prompt cache is cold (an hour idle): the plugin prunes while the conversation sits idle, or the user prunes from the pane.',
+  'Marked turns are replaced by one line saying how many turns went and the head of each prompt, once the prompt cache is cold (an hour idle): the plugin prunes while the conversation sits idle, or the user prunes from the pane.',
   'The user sees your marks as [C] in the /prune pane and can unmark them.',
   'Mark what the rest of the work no longer needs: setup or debugging that ended in a fix, probes, superseded attempts, test confirmations.',
   'Keep turns that carry the goal, decisions, constraints or facts still relied on (a later turn may say "what I asked in the first message").',
@@ -85,13 +116,12 @@ const IDLE_PRUNE_DELAY_MS = 5_000
 const REDRAW_MS = 60_000
 
 const PANE = 'context-prune-prune'
-const PANE_TITLE = 'Podar contexto'
 // The pane lists the newest prompts only.
 const PANE_ROWS = 40
 
 async function showStatus($: EngineInterface) {
   const current = await read($, meter)
-  const label = current ? statusLabel(cacheState(current.lastRequestAt, await $.clock.now())) : undefined
+  const label = current ? statusLabel(cacheState(current.lastRequestAt, await $.clock.now()), await readLang($)) : undefined
   $.ui.status(label)
 }
 
@@ -202,8 +232,8 @@ async function hasPending($: EngineInterface) {
 // the hook that asks has returned. `then` runs after it, whatever came of it.
 function startPrune($: EngineInterface, description: string, then?: () => Promise<unknown>) {
   $.clock.after(0, async () => {
-    await $.command.run({ command: 'compact', args: `${PRUNE_TAG} ${description}`.trim() }).catch(error => {
-      $.ui.toast(`/prune não começou (${error}). Mande /compact ${PRUNE_TAG}`)
+    await $.command.run({ command: 'compact', args: `${PRUNE_TAG} ${description}`.trim() }).catch(async error => {
+      $.ui.toast((await texts($)).pruneFailed(error, PRUNE_TAG))
     })
     // The pane last drew while the compaction was still laying its rows down
     // (the marks clear inside it), and they keep landing after the command
@@ -254,6 +284,8 @@ function isTyped(origin: PromptOrigin) {
 // The /prune pane: the turns, their images, and what a prune would cost.
 async function drawPane($: EngineInterface, e: ResolveInput) {
   const { Box, Text, Button } = $.ui.resolve(e)
+  const lang = await readLang($)
+  const t = textsFor(lang)
   const messages = await liveMessages($)
   const marks = (await read($, marksAtom)) ?? []
   const { cut: markedCut, found } = matchMarks(messages, marks)
@@ -273,13 +305,7 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
     <Button key={`image-${row.uuid}`} plain onPress={() => toggleImage($, row.uuid)}>
       {row.isMarked ? '[x]' : '[ ]'} {`~${formatTokens(row.tokens)}`.padStart(5)}{' '}
       <Text dimColor>
-        {row.isLegacy
-          ? '[print]'
-          : row.fromTool
-            ? '[print de ferramenta]'
-          : row.count > 1
-            ? `[${row.count} imagens anexadas]`
-            : '[imagem anexada]'}
+        {row.isLegacy ? t.imageLegacy : row.fromTool ? t.imageFromTool : t.imagesAttached(row.count)}
       </Text>
     </Button>
   )
@@ -300,14 +326,14 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
   const cache = await readCache($)
   const rewritten = [
     (cut.length > 0 || markedImages.some(row => !loose.includes(row))) &&
-      `~${formatTokens(rewrittenTokens(turns, cut, byTurn))} depois do 1º corte`,
-    markedImages.some(row => loose.includes(row)) && 'o que vem depois do print sem turno',
+      t.rewrittenAfterCut(`~${formatTokens(rewrittenTokens(turns, cut, byTurn))}`),
+    markedImages.some(row => loose.includes(row)) && t.afterLoose,
   ].filter(Boolean)
   const cacheLine = !hasMarks
-    ? 'Marque os turnos ou os prints a remover.'
+    ? t.markHint
     : cache?.isWarm
-      ? `Cache quente (${cache.minutesLeft} min): podar agora regrava ${rewritten.join(' e ') || 'o que vem depois do 1º corte'} a 2x; o que vem antes continua no cache. Deixe marcado: a poda roda sozinha na primeira mensagem depois que esfriar.`
-      : 'Cache frio: a próxima mensagem regrava tudo de qualquer jeito, podar não custa nada a mais.'
+      ? t.cacheWarm(cache.minutesLeft, rewritten.join(t.and) || t.firstCut)
+      : t.cacheCold
 
   return (
     <Box flexDirection="column">
@@ -315,37 +341,34 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
         ...imageLeft(byTurn.get(turn.index) ?? [], turn.index).map(imageRow),
         <Button key={`turn-${turn.index}`} plain onPress={() => toggle(turn.index, turn.head)}>
           {markBy.get(turn.index) ?? '[ ]'} {`${turn.isMeasured ? '' : '~'}${formatTokens(turn.tokens)}`.padStart(5)}{' '}
-          <Text dimColor>{turn.preview}</Text>
+          <Text dimColor>{turn.preview || t.imagesAttached(1)}</Text>
         </Button>,
       ])}
-      {loose.length > 0 && <Text dimColor>Prints sem turno identificado:</Text>}
+      {loose.length > 0 && <Text dimColor>{t.looseHeader}</Text>}
       {loose.map(imageRow)}
       <Text> </Text>
       {cut.length + markedImages.length > 0 && (
         <Text>
-          {[
-            cut.length > 0 && `${countTurns(cut)} turno(s)`,
-            markedImages.length > 0 && `${markedImages.length} print(s)`,
-          ]
-            .filter(Boolean)
-            .join(' e ')}{' '}
-          marcado(s), ~
-          {formatTokens(removedTokens(cut) + markedImages.reduce((sum, row) => sum + row.tokens, 0))} tokens a
-          menos.
+          {t.marked(
+            [cut.length > 0 && t.turns(countTurns(cut)), markedImages.length > 0 && t.images(markedImages.length)]
+              .filter(Boolean)
+              .join(t.and),
+            formatTokens(removedTokens(cut) + markedImages.reduce((sum, row) => sum + row.tokens, 0)),
+          )}
         </Text>
       )}
       {[...markBy.values()].includes('[C]') && (
-        <Text dimColor>[C] = marcado pelo Claude; clique para desmarcar.</Text>
+        <Text dimColor>{t.claudeLegend}</Text>
       )}
-      {onMessages > 0 && <Text>{onMessages} turno(s) marcado(s) fora desta lista.</Text>}
+      {onMessages > 0 && <Text>{t.markedOffList(t.turns(onMessages))}</Text>}
       {allImages.length > 0 && (
-        <Text dimColor>Um print marcado sai sozinho; o texto da mensagem fica, com [print removido] no lugar.</Text>
+        <Text dimColor>{t.imageNote(t.mediaRemoved)}</Text>
       )}
       <Text dimColor>{cacheLine}</Text>
       {hasMarks && (
         <Box flexDirection="row" gap={2}>
           <Button key="prune" onPress={() => startPrune($, '')}>
-            Podar Agora
+            {t.pruneNow}
           </Button>
           <Button
             key="clear"
@@ -354,11 +377,37 @@ async function drawPane($: EngineInterface, e: ResolveInput) {
               await markAllImages($, false)
             }}
           >
-            Desmarcar Todos
+            {t.clearAll}
           </Button>
         </Box>
       )}
-      <Text dimColor>Tokens medidos ao fim de cada turno; ~ estimado (texto pelo tamanho, imagens pela resolução).</Text>
+      <Text dimColor>{t.tokensNote}</Text>
+      <Box flexDirection="row" gap={2}>
+        <Button
+          key="language"
+          plain
+          onPress={() => {
+            isLangOpen = !isLangOpen
+            $.ui.invalidate('ui.render')
+          }}
+        >
+          {t.languageButton}
+        </Button>
+        {isLangOpen && <Text dimColor>{t.languageHint}</Text>}
+        {isLangOpen &&
+          LANGS.map(option => (
+            <Button
+              key={`language-${option}`}
+              plain
+              onPress={async () => {
+                isLangOpen = false
+                await setLang($, option)
+              }}
+            >
+              {option === lang ? `[x] ${textsFor(option).langName}` : `[ ] ${textsFor(option).langName}`}
+            </Button>
+          ))}
+      </Box>
     </Box>
   )
 }
@@ -370,6 +419,7 @@ export const register: Register = on => {
     const path = await dataPath($)
     const stored = path ? (await readRecords($, path))[await $.session.id()] : undefined
     const lastRequestAt = kept?.lastRequestAt ?? stored?.lastRequestAt ?? null
+    await loadLang($)
     await patchMeter($, { tokens: context.tokens, window: context.window, lastRequestAt })
     if (stored?.marks?.length) await update($, marksAtom, current => (current?.length ? current : stored.marks!))
     if (stored?.images?.length) await update($, imagesAtom, current => (current?.length ? current : stored.images!))
@@ -384,7 +434,8 @@ export const register: Register = on => {
     $.clock.after(IDLE_PRUNE_DELAY_MS, () => pruneWhenIdle($))
     await $.command.register({
       name: 'prune',
-      description: 'Open the list of turns to mark for removal from the context',
+      description: 'Open the list of turns to mark for removal from the context; en or pt sets the language',
+      argumentHint: '[en|pt]',
     })
     await $.tool.register({
       name: MARK_TOOL,
@@ -464,7 +515,7 @@ export const register: Register = on => {
     if (isTyped(e.origin) && !e.attachments?.length && shouldAutoPrune(await hasPending($), await readCache($))) {
       const text = e.text
       startPrune($, '', () => $.prompt.submit({ text, asUser: true }))
-      return { drop: 'context-prune: conversa fria, podando o que estava marcado antes de enviar' }
+      return { drop: (await texts($)).autoPruneDrop }
     }
 
     const current = await read($, meter)
@@ -473,10 +524,17 @@ export const register: Register = on => {
     return next({ ...e, context: [...(e.context ?? []), note] })
   })
 
-  // /prune opens the list; the pane's Podar applies the marks.
-  on('command.run', { command: 'prune' }, async $ => {
-    await $.ui.open({ id: PANE, title: PANE_TITLE, focus: true })
-    return { text: 'Painel aberto: marque os turnos e aperte Podar, ou deixe marcado para a poda rodar quando a conversa esfriar.' }
+  // /prune opens the list; the pane's Prune Now applies the marks.
+  // /prune en|pt sets the language instead.
+  on('command.run', { command: 'prune' }, async ($, e) => {
+    const language = langArg(e.args)
+    if (language) {
+      await setLang($, language)
+      return { text: textsFor(language).langSet }
+    }
+    const t = await texts($)
+    await $.ui.open({ id: PANE, title: t.paneTitle, focus: true })
+    return { text: t.paneOpened }
   })
 
   on('tool.call', { tool: MARK_TOOL_ID }, async ($, e) => {
@@ -493,8 +551,8 @@ export const register: Register = on => {
     }
     const cache = await readCache($)
     const when = cache?.isWarm
-      ? `O cache esfria em ${cache.minutesLeft} min; a poda roda sozinha quando a conversa completar 1 h parada.`
-      : 'O cache está frio: a poda roda sozinha em até 1 min.'
+      ? `The cache goes cold in ${cache.minutesLeft} min; the prune runs on its own once the conversation has sat an hour idle.`
+      : 'The cache is cold: the prune runs on its own within a minute.'
     const { turns: weighed } = await weighTurns($, messages)
     const text = [toolListing(messages, (await read($, marksAtom)) ?? [], weighed), ...refused, when].join('\n')
     return { result: text }
@@ -520,27 +578,31 @@ export const register: Register = on => {
       }
       return result
     }
+    const lang = await readLang($)
+    const t = textsFor(lang)
     const { cut, missed } = matchMarks(e.messages, (await read($, marksAtom)) ?? [])
     const readImagesBefore = readImages($)
     const imageRows = new Set((await readImagesBefore).filter(row => row.isMarked).map(row => row.uuid))
     const images = countImages(e.messages, imageRows)
     if (cut.length === 0 && images === 0) {
-      const lost = missed.length ? `: ${missed.length} marca(s) não encontrada(s) na conversa` : ''
-      return { skip: `context-prune: nada a podar${lost}` }
+      return { skip: [t.nothingToPrune, missed.length > 0 && t.marksMissed(missed.length)].filter(Boolean).join(': ') }
     }
     // Weighed before the rows change: the request form still holds the cut turns.
     const weighed = new Map((await weighTurns($, e.messages)).turns.map(turn => [turn.index, turn]))
     const cutWeighed = cut.map(turn => weighed.get(turn.index) ?? turn)
-    const messages = pruneMessages(stripImages(e.messages, imageRows), cut, description)
+    const messages = pruneMessages(stripImages(e.messages, imageRows, lang), cut, description, lang)
     await setImages($, () => [])
     // A mark that found no turn stays, and is said: it is never dropped quietly.
     await setMarks($, () => missed)
-    const done = [
-      missed.length > 0 && `${missed.length} marca(s) não encontrada(s), mantida(s)`,
-      cut.length > 0 && `${countTurns(cut)} turno(s) removido(s), ~${formatTokens(removedTokens(cutWeighed))} tokens`,
-      images > 0 && `${images} print(s) removido(s)`,
+    const removed = [
+      cut.length > 0 && t.turnsTokens(t.turns(countTurns(cut)), formatTokens(removedTokens(cutWeighed))),
+      images > 0 && t.images(images),
     ].filter(Boolean)
-    $.ui.toast(`${done.join('; ')}`)
+    $.ui.toast(
+      [removed.length > 0 && t.removedToast(removed.join(', ')), missed.length > 0 && t.marksMissed(missed.length)]
+        .filter(Boolean)
+        .join('; '),
+    )
     await markLiveStart(messages)
     await setBoundary($, null)
     isPrunedSinceResponse = true

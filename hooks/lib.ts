@@ -1,6 +1,8 @@
 import type { ApiContentBlock, ApiMessage, SessionMessage } from 'claude-code'
 
 import type { ImageRow, Mark, Meter, LiveAnchor } from '../types'
+import type { Lang, Texts } from './i18n'
+import { isLang, TEXTS, textsFor } from './i18n'
 
 // Prompt-cache lifetime of this account's requests. Each request renews the
 // whole cached prefix; on usage overage it drops to 5 minutes, which a mod
@@ -30,6 +32,23 @@ export function dataPathFor(env: { configDir?: string; home?: string }): string 
   const config = env.configDir || (env.home && `${env.home}/.claude`)
   if (!config) return undefined
   return `${config.replaceAll('\\', '/').replace(/\/+$/, '')}/plugins/data/context-prune/sessions.json`
+}
+
+// Choices that hold across conversations (the language), beside the
+// sessions' file.
+export type Preferences = { language?: Lang }
+
+export function preferencesPathFor(dataPath: string): string {
+  return dataPath.replace(/sessions\.json$/, 'preferences.json')
+}
+
+export function parsePreferences(text: string | undefined): Preferences {
+  try {
+    const value = text === undefined ? {} : JSON.parse(text)
+    return value && typeof value === 'object' && isLang(value.language) ? { language: value.language } : {}
+  } catch {
+    return {}
+  }
 }
 
 export function parseRecords(text: string | undefined): Records {
@@ -82,11 +101,10 @@ export function contextLabel(meter: Meter): string | undefined {
 }
 
 // The status line beside the model picker, in the person's words.
-export function statusLabel(cache: Cache): string | undefined {
+export function statusLabel(cache: Cache, lang: Lang): string | undefined {
   if (cache === null) return undefined
-  return cache.isWarm
-    ? `Conversa está quente - ${cache.minutesLeft} min restantes`
-    : 'Conversa está fria - /prune recomendado'
+  const t = textsFor(lang)
+  return cache.isWarm ? t.statusWarm(cache.minutesLeft) : t.statusCold
 }
 
 // One line beside each prompt, so the model reasons with real numbers. The
@@ -128,9 +146,17 @@ export type Turn = {
 }
 
 const HEAD_CHARS = 80
-// A prompt with no text carried only media: the rows hold no blocks to tell
-// an image from a file, and a pasted screenshot is the usual case.
-const MEDIA_ONLY = '[imagem anexada]'
+// A prompt with no text carried only media: its preview is empty, and the
+// pane names it in the person's language.
+const MEDIA_ONLY = ''
+
+// A prompt's text less what a prune wrote into it, in any language: the
+// removed-print line, and who the removed turns were from.
+function withoutPruneMarks(text: string): string {
+  let out = text
+  for (const t of Object.values(TEXTS)) out = out.replaceAll(t.mediaRemoved, '').replaceAll(` (${t.removedWho})`, '')
+  return out
+}
 const REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g
 
 function isPromptStart(m: SessionMessage): boolean {
@@ -158,7 +184,7 @@ export function splitTurns(messages: readonly SessionMessage[]): Turn[] {
         index: i,
         end: messages.length,
         // The pane leaves out the line a removed print left; the model keeps it.
-        preview: previewOf(m.text.replaceAll(MEDIA_REMOVED, '').replace(` (${REMOVED_WHO})`, '')) || MEDIA_ONLY,
+        preview: previewOf(withoutPruneMarks(m.text)) || MEDIA_ONLY,
         head: m.text.slice(0, HEAD_CHARS),
         tokens: 0,
         isCommand: /^\s*<(command-name|local-command)/.test(m.text),
@@ -245,7 +271,9 @@ export function pruneMessages(
   messages: readonly SessionMessage[],
   cut: readonly Turn[],
   description: string,
+  lang: Lang,
 ): SessionMessage[] {
+  const t = textsFor(lang)
   const out: SessionMessage[] = []
   const starts = new Map(cut.map(turn => [turn.index, turn]))
   let i = 0
@@ -256,15 +284,15 @@ export function pruneMessages(
       continue
     }
     const run: Turn[] = []
-    for (let t = starts.get(i); t; t = starts.get(i)) {
-      run.push(t)
-      i = t.end
+    for (let turn = starts.get(i); turn; turn = starts.get(i)) {
+      run.push(turn)
+      i = turn.end
     }
-    const pieces = run.filter(t => !t.isCommand).map(t => removedParts(messages[t.index], t))
+    const pieces = run.filter(turn => !turn.isCommand).map(turn => removedParts(messages[turn.index], turn, t))
     const count = pieces.reduce((sum, piece) => sum + piece.count, 0)
     const label = pieces.length
-      ? removedLabel(count, description ? [description] : pieces.flatMap(piece => piece.parts))
-      : '[removido: comandos]'
+      ? removedLabel(count, description ? [description] : pieces.flatMap(piece => piece.parts), lang)
+      : t.removedCommands
     const reminders = run[0].index === 0 ? (messages[0].text.match(REMINDER) ?? []) : []
     out.push({ role: 'user', text: [...reminders, label].join('\n'), toolUses: [] })
   }
@@ -272,12 +300,14 @@ export function pruneMessages(
 }
 
 // The line a prune leaves, as the model reads it: how many turns went and the
-// head of each prompt, so it knows what it no longer has.
-export const REMOVED_WHO = 'pedidos do usuário e respostas do Claude'
-const REMOVED_LINE = /^\[removido: (\d+) turnos? \([^)]*\): ([\s\S]*)\]$/
+// head of each prompt, so it knows what it no longer has. A line in either
+// language is read back, so a later prune merges it whatever the language.
+const REMOVED_LINE = /^\[(?:removido|removed): (\d+) (?:turnos?|turns?) \([^)]*\): ([\s\S]*)\]$/
+const LEGACY_LINE = /^\[(?:removido|removed): ([\s\S]*)\]$/
 
-export function removedLabel(count: number, parts: readonly string[]): string {
-  return `[removido: ${count} ${count === 1 ? 'turno' : 'turnos'} (${REMOVED_WHO}): ${parts.join(' | ')}]`
+export function removedLabel(count: number, parts: readonly string[], lang: Lang): string {
+  const t = textsFor(lang)
+  return t.removedLine(count, t.removedWho, parts.join(' | '))
 }
 
 // Parts joined by ' | ' outside brackets.
@@ -294,16 +324,14 @@ function countParts(text: string): number {
 
 // What one cut turn adds to the line: a line an earlier prune left counts as
 // the turns it names, so pruning it again does not nest the count.
-function removedParts(m: SessionMessage, turn: Turn): { count: number; parts: string[] } {
+function removedParts(m: SessionMessage, turn: Turn, t: Texts): { count: number; parts: string[] } {
   const text = m.text.replace(REMINDER, ' ').trim()
   const line = text.match(REMOVED_LINE)
   if (line) return { count: Number(line[1]), parts: [line[2]] }
   // A line from before the count was written: one turn per part.
-  if (text.startsWith('[removido: ') && text.endsWith(']')) {
-    const inner = text.slice('[removido: '.length, -1)
-    return { count: countParts(inner), parts: [inner] }
-  }
-  return { count: 1, parts: [turn.preview] }
+  const legacy = text.match(LEGACY_LINE)
+  if (legacy) return { count: countParts(legacy[1]), parts: [legacy[1]] }
+  return { count: 1, parts: [turn.preview || t.imagesAttached(1)] }
 }
 
 // Tokens the marked turns hold, as estimated.
@@ -344,8 +372,6 @@ export function shouldAutoPrune(hasPending: boolean, cache: Cache): boolean {
 
 // --- prints ---------------------------------------------------------------
 
-export const MEDIA_REMOVED = '[print removido]'
-
 // Whether a row's blocks hold an image, at the top or inside a tool result.
 export function hasImage(content: readonly ApiContentBlock[]): boolean {
   return content.some(
@@ -360,12 +386,13 @@ export function hasImage(content: readonly ApiContentBlock[]): boolean {
 // The rows with images rebuilt without their handle: the engine builds such a
 // row from its text and tool blocks alone, so the image goes and a line says
 // so. Same length and order, so turn indices still hold.
-export function stripImages(messages: readonly SessionMessage[], rows: ReadonlySet<string>): SessionMessage[] {
+export function stripImages(messages: readonly SessionMessage[], rows: ReadonlySet<string>, lang: Lang): SessionMessage[] {
+  const removed = textsFor(lang).mediaRemoved
   return messages.map(m => {
     if (m.handle === undefined || !rows.has(m.handle)) return m
     return {
       role: m.role,
-      text: m.text ? `${m.text}\n${MEDIA_REMOVED}` : MEDIA_REMOVED,
+      text: m.text ? `${m.text}\n${removed}` : removed,
       toolUses: m.toolUses,
       ...(m.toolResults ? { toolResults: m.toolResults } : {}),
     }
@@ -375,7 +402,7 @@ export function stripImages(messages: readonly SessionMessage[], rows: ReadonlyS
 // Which turn a prompt's text names, as the pane and session.append both read
 // it: the head of its preview, less what a prune left in it.
 export function promptKey(text: string): string {
-  return previewOf(text.replaceAll(MEDIA_REMOVED, '').replace(` (${REMOVED_WHO})`, '')).slice(0, 60)
+  return previewOf(withoutPruneMarks(text)).slice(0, 60)
 }
 
 export function turnKey(turn: Turn): string {
@@ -509,7 +536,7 @@ export function toolListing(
   const lines = markableTurns(messages).map(turn => {
     const weight = weights.get(turn.index) ?? turn
     const tokens = `${weight.isMeasured ? '' : '~'}${formatTokens(weight.tokens)}`
-    return `#${turn.index} ${by.get(turn.index) ?? '[ ]'} ${tokens} ${turn.preview}`
+    return `#${turn.index} ${by.get(turn.index) ?? '[ ]'} ${tokens} ${turn.preview || '[image]'}`
   })
   return lines.join('\n')
 }
@@ -530,12 +557,12 @@ export function applyToolMarks(
   for (const n of numbers) {
     const turn = turns.get(n)
     const mark = markOn(n)
-    if (!turn) refused.push(`#${n}: não é um turno que dá para marcar (comando, turno atual ou número inexistente)`)
+    if (!turn) refused.push(`#${n}: not a turn that can be marked (a command, the current turn, or no such number)`)
     else if (action === 'mark' && !mark) {
       next.push({ index: turn.index, head: turn.head, fromEnd: messages.length - turn.index, by: 'claude' })
     } else if (action === 'unmark' && mark) {
       if (mark.by === 'claude') next = next.filter(m => m !== mark)
-      else refused.push(`#${n}: marcado pelo usuário; só ele desmarca`)
+      else refused.push(`#${n}: marked by the user; only the user unmarks it`)
     }
   }
   return { marks: next, refused }

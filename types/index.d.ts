@@ -1,3 +1,6 @@
+/** The language of what the person reads: the pane, the status, the notices. */
+export type Lang = 'en' | 'pt'
+
 export type Meter = {
   /** Input tokens of the last response (cached + uncached); absent before one. */
   tokens?: number
@@ -54,6 +57,8 @@ declare module 'claude-code' {
   interface PluginState {
     'context-prune': {
       meter: Meter | null
+      /** The language chosen with /prune en|pt or the pane's ⚙; kept in preferences.json. */
+      language: Lang
       marks: Mark[]
       /**
        * Rows that carry an image (a pasted print, a tool's screenshot); a
